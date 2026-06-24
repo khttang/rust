@@ -1,0 +1,13 @@
+[build]
+# Set the default cross-compilation target architecture
+target = "thumbv7em-none-eabihf"
+
+[target.thumbv7em-none-eabihf]
+# Pass linking scripts and optimizations directly to the linker
+rustflags = [
+    "-C", "link-arg=-Tmemory.x",
+    "-C", "link-arg=--gc-sections",
+]
+
+# Configures 'cargo run' to automatically build, flash, and read debug logs
+runner = "probe-rs run --chip STM32F401RETx"

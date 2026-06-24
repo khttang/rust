@@ -1,0 +1,22 @@
+[package]
+name = "cortex_app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Basic definitions for Cortex-M processors (assembly wrappers)
+cortex-m = "0.7.7"
+# Runtime support, startup loops, and vector table initialization
+cortex-m-rt = "0.7.3"
+# Optional: Prints debug messages to your host computer console via probe-rs
+rtt-target = "0.5.0"
+# Embedded crypto library with no_std support (Ed25519 or ECDSA)
+signature = { version = "2.2.0", default-features = false }
+ed25519-dalek = { version = "2.1.1", default-features = false, features = ["alloc"] }
+# Fast, zero-allocation cryptographic hash function
+sha2 = { version = "0.10.8", default-features = false }
+
+[profile.release]
+codegen-units = 1 # Better optimizations
+lto = true        # Link-Time Optimization reduces binary size
+
