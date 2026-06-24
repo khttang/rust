@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "zero-trust-core",
+    "edge-node",
+    "edge-gateway"
+]
+resolver = "2"
