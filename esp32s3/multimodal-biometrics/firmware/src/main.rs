@@ -7,10 +7,10 @@ use esp_idf_svc::wifi::{AsyncWifi, AuthMethod, ClientConfiguration, Configuratio
 use esp_idf_svc::timer::EspTaskTimerService;
 use futures::executor::block_on;
 use log::{info, warn};
-//use std::sync::Arc;
+use std::time::Duration;
 
-const WIFI_SSID: &str = "Your_WiFi_Name";
-const WIFI_PASS: &str = "Your_WiFi_Password";
+const WIFI_SSID: &str = "SpectrumSetup-AC";
+const WIFI_PASS: &str = "T@ngn3t2025";
 
 fn main() -> anyhow::Result<()> {
     // 1. Initialize the system logging framework
@@ -21,8 +21,6 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
-
-    // 3. Initialize the required background task timer service 
     let timer_service = EspTaskTimerService::new()?;
 
     // 3. Create the standard Wi-Fi controller driver instance
@@ -35,13 +33,15 @@ fn main() -> anyhow::Result<()> {
     let executor: LocalExecutor = edge_executor::LocalExecutor::new();
 
     // 5. Spawn and block the main execution thread inside our async network task
-    block_on(executor.run(async {
+    // BOX THE FUTURE: This moves the entire massive async state machine 
+    // off the stack frame and onto the heap safely.
+    block_on(executor.run(Box::pin(async {
         if let Err(e) = connect_wifi(&mut wifi).await {
             warn!("Failed to establish network connection: {:?}", e);
         } else {
             info!("Wi-Fi cycle successfully completed!");
         }
-    }));
+    })));
 
     Ok(())
 }
@@ -50,42 +50,59 @@ fn main() -> anyhow::Result<()> {
 async fn connect_wifi(wifi: &mut AsyncWifi<EspWifi<'static>>) -> anyhow::Result<()> {
     info!("Setting up Wi-Fi configurations...");
 
-    let wifi_configuration = Configuration::Client(ClientConfiguration {
-        ssid: WIFI_SSID.try_into().unwrap(),
-        password: WIFI_PASS.try_into().unwrap(),
-        auth_method: AuthMethod::WPA2WPA3Personal, // Adaptive matching fallback
-        ..Default::default()
-    });
+    // 1. Array of authentication methods to cycle through
+    let auth_modes = [
+        (AuthMethod::WPA2WPA3Personal, "WPA2/WPA3 Mixed (With PMF)"),
+        (AuthMethod::WPA2Personal, "WPA2 Personal (Standard)"),
+    ];
 
-    // Apply configuration settings
-    wifi.set_configuration(&wifi_configuration)?;
+    for (method, description) in auth_modes {
+        info!("Attempting connection using mode: {}", description);
 
-    info!("Starting Wi-Fi subsystems...");
-    wifi.start().await?;
+        let wifi_configuration = Configuration::Client(ClientConfiguration {
+            ssid: WIFI_SSID.try_into().unwrap(),
+            password: WIFI_PASS.try_into().unwrap(),
+            auth_method: method, // Dynamically assigned mode
+            ..Default::default()
+        });
 
-    info!("Scanning and connecting to access point: {}...", WIFI_SSID);
-    wifi.connect().await?;
+        // Apply config
+        wifi.set_configuration(&wifi_configuration)?;
 
-    info!("Waiting for DHCP network assignment to complete...");
-    wifi.wait_netif_up().await?;
+        // Ensure the subsystem is fresh and running
+        if !wifi.is_started()? {
+            wifi.start().await?;
+        }
 
-    // Fetch and display IP configuration assignments
-    let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
-    info!("Network interface status: {:?}", ip_info);
+        info!("Connecting to access point...");
+        
+        // 2. Catch failures on the connection attempt
+        if let Err(e) = wifi.connect().await {
+            warn!("Physical handshake failed with mode {}: {:?}", description, e);
+            // Disconnect and sleep briefly before falling back
+            //  FIX: Uses the native ESP-IDF driver delay mechanism
+            let _ = wifi.disconnect().await;
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            continue; // Jump to the next authentication method in our list
+        }
 
-    Ok(())
+        info!("Physical link established! Waiting for DHCP address assignment...");
+        
+        // 3. Catch failures on the DHCP assignment stage
+        if let Err(e) = wifi.wait_netif_up().await {
+            warn!("DHCP lease failed using mode {}: {:?}", description, e);
+            let _ = wifi.disconnect().await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            continue;
+        }
+
+        // Both physical link and IP allocation succeeded!
+        let netif = wifi.wifi().sta_netif();
+        let ip_info = netif.get_ip_info()?;
+        info!("Successfully connected! IP Details: {:?}", ip_info);
+        return Ok(());
+    }
+
+    // If the loop finishes without returning, both modes failed
+    Err(anyhow::anyhow!("Could not connect using any supported authentication standard"))
 }
-
-
-/*
-fn main() {
-    // It is necessary to call this function once. Otherwise, some patches to the runtime
-    // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
-    esp_idf_svc::sys::link_patches();
-
-    // Bind the log crate to the ESP Logging facilities
-    esp_idf_svc::log::EspLogger::initialize_default();
-
-    log::info!("Hello, world!");
-}
-*/

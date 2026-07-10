@@ -27,6 +27,7 @@ esp-idf-svc = { version = "0.52.1", features = ["critical-section", "embassy-tim
 embassy-time = { version = "0.5", features = ["generic-queue-8"] }
 edge-executor = "0.4"
 futures = "0.3"
+tokio = { version = "1.52.3", features = ["time"] }
 
 [build-dependencies]
 embuild = "0.33"
