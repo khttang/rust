@@ -17,3 +17,9 @@ ESP_IDF_TOOLS_INSTALL_DIR = "global"
 # Uncomment this if you have moved the target dir by setting CARGO_TARGET_DIR or similar.
 # Required for now due to embuild limitations.
 #CARGO_WORKSPACE_DIR = { value = "", relative = true }
+
+# The only component directory variable you need:
+IDF_EXTRA_COMPONENT_DIRS = { value = "${CARGO_MANIFEST_DIR}/esp32-camera" }
+
+# The include paths required by bindgen:
+BINDGEN_EXTRA_CLANG_ARGS = { value = "-I${CARGO_MANIFEST_DIR}/esp32-camera/driver/include -I${CARGO_MANIFEST_DIR}/esp32-camera/conversions/include" }
