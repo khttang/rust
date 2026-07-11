@@ -1,17 +1,17 @@
-// 1. Standard ESP-IDF System Drivers
-use esp_idf_svc::sys as esp_sys; 
-use esp_idf_sys::camera as esp_camera; 
-
 use edge_executor::LocalExecutor; 
 use esp_idf_svc::hal::peripherals::Peripherals; 
 use esp_idf_svc::http::server::{Configuration, EspHttpServer}; 
+use esp_idf_svc::sys as esp_sys; 
+use esp_idf_sys::camera as esp_camera; 
+use esp_idf_svc::log::EspLogger; 
 use esp_idf_svc::eventloop::EspSystemEventLoop; 
 use esp_idf_svc::nvs::EspDefaultNvsPartition; 
 use esp_idf_svc::wifi::{AsyncWifi, AuthMethod, ClientConfiguration, Configuration as WifiConfiguration, EspWifi}; 
-use esp_idf_svc::timer::EspTaskTimerService;
+use esp_idf_svc::timer::EspTaskTimerService; 
 use futures::executor::block_on; 
 use log::{error, info, warn}; 
 use std::time::Duration; 
+use std::ffi::c_char; 
 use std::thread; 
 
 const WIFI_SSID: &str = "SpectrumSetup-AC"; 
@@ -29,36 +29,62 @@ const PIN_D7: i32 = 16;
 const PIN_XCLK: i32 = 15; 
 const PIN_PCLK: i32 = 13; 
 const PIN_VSYNC: i32 = 6; 
-const PIN_HREF: i32 = 7;   
+const PIN_HREF: i32 = 7; 
+const PIN_SDA: i32 = 4; 
+const PIN_SCL: i32 = 5; 
 const PIN_RESET: i32 = -1; 
 const PIN_PWDN: i32 = -1; 
 
+// A wrapper to safely send raw pointer framebuffers across threads
+struct SendPtr(*mut esp_camera::camera_fb_t);
+unsafe impl Send for SendPtr {}
+
 fn main() -> anyhow::Result<()> { 
-    // 1. Initialize the system logging framework 
     esp_idf_svc::log::EspLogger::initialize_default(); 
     info!("Initializing ESP32-S3 async Wi-Fi system..."); 
 
-    // 2. Take ownership of vital system peripherals 
     let peripherals = Peripherals::take()?; 
     let sys_loop = EspSystemEventLoop::take()?; 
     let nvs = EspDefaultNvsPartition::take()?; 
     let timer_service = EspTaskTimerService::new()?; 
 
-    // 3. Initialize the C-camera subsystem via unsafe bindings 
     info!("Initializing camera subsystem..."); 
     init_camera()?; 
 
-    // 4. Create the standard Wi-Fi controller driver instance 
+    // --- DECOUPLING: ASYNC CHANNEL BOUNDED TO 1 FRAME ---
+    // If the browser drops frames, the background thread drops frames automatically
+    // instead of accumulating latency or consuming PSRAM.
+    let (tx, rx) = async_channel::bounded::<SendPtr>(1);
+
+    // --- TASK A: THE BACKGROUND PRODUCER THREAD ---
+    // This dedicated loop keeps hardware DMA ring buffers flowing without blocking async networking
+    thread::spawn(move || {
+        info!("Background camera capture thread spawned.");
+        loop {
+            unsafe {
+                let fb = esp_camera::esp_camera_fb_get();
+                if !fb.is_null() {
+                    // Send to channel. If full, immediately return buffer to avoid frame freeze.
+                    if let Err(_) = tx.try_send(SendPtr(fb)) {
+                        esp_camera::esp_camera_fb_return(fb);
+                    }
+                } else {
+                    error!("Camera core failed to retrieve DMA frame buffer block.");
+                }
+            }
+            // Control capture loop pacing (~25 FPS)
+            thread::sleep(Duration::from_millis(40));
+        }
+    });
+
     let mut wifi = AsyncWifi::wrap( 
         EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))?, 
         sys_loop.clone(), 
         timer_service 
     )?; 
 
-    // 5. Instantiate a local asynchronous executor thread 
     let executor: LocalExecutor = edge_executor::LocalExecutor::new(); 
 
-    // 6. Spawn and block the main execution thread inside our async network task 
     block_on(executor.run(Box::pin(async { 
         if let Err(e) = connect_wifi(&mut wifi).await { 
             warn!("Failed to establish network connection: {:?}", e); 
@@ -67,12 +93,11 @@ fn main() -> anyhow::Result<()> {
         } 
     }))); 
 
-    // 7. Instantiate an HTTP server on Port 80 
     let mut server = EspHttpServer::new(&Configuration::default())?; 
     info!("HTTP Server running on port 80. Path: /stream"); 
 
-    // 8. Register the MJPEG stream handler endpoint 
-    server.fn_handler("/stream", esp_idf_svc::http::Method::Get, |request| { 
+    // --- TASK B: THE ROUTER CONSUMER TASK ---
+    server.fn_handler("/stream", esp_idf_svc::http::Method::Get, move |request| { 
         let mut response = request.into_response( 
             200, 
             None, 
@@ -84,49 +109,40 @@ fn main() -> anyhow::Result<()> {
         info!("Laptop client connected to video stream."); 
 
         loop { 
-            unsafe { 
-                // Fix 1: Changed `esp_cam::` to your explicit import `esp_camera::`
-                // Fix 2: Removed nested duplicate `unsafe {` block which broke scoping syntax
-                let fb = esp_camera::esp_camera_fb_get(); 
-                if fb.is_null() { 
-                    error!("Failed to capture camera frame buffer."); 
-                    thread::sleep(Duration::from_millis(100)); 
-                    continue; 
-                } 
+            // Block on the channel receiver asynchronously until a fresh frame arrives.
+            // This implicitly yields the thread back to the edge_executor, preventing bottleneck drops!
+            if let Ok(SendPtr(fb)) = block_on(rx.recv()) {
+                unsafe { 
+                    let frame_bytes = std::slice::from_raw_parts((*fb).buf, (*fb).len); 
 
-                // Slice the raw native C byte buffer cleanly into Rust scope memory 
-                let frame_bytes = std::slice::from_raw_parts((*fb).buf, (*fb).len); 
+                    let part_header = format!( 
+                        "\r\n--123456789000000000000987654321\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n", 
+                        frame_bytes.len() 
+                    ); 
 
-                // Build standard HTTP MJPEG container parts 
-                let part_header = format!( 
-                    "\r\n--123456789000000000000987654321\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n", 
-                    frame_bytes.len() 
-                ); 
+                    if response.write(part_header.as_bytes()).map_err(|e| e.0).is_err() 
+                        || response.write(frame_bytes).map_err(|e| e.0).is_err() 
+                        || response.write(b"\r\n").map_err(|e| e.0).is_err() 
+                    { 
+                        esp_camera::esp_camera_fb_return(fb); 
+                        warn!("Stream connection dropped by host browser."); 
+                        break; 
+                    } 
 
-                // Write the image metadata header, raw frame contents, and frame spacing rules 
-                if response.write(part_header.as_bytes()).is_err() || response.write(frame_bytes).is_err() || response.write(b"\r\n").is_err() { 
-                    // Fix 3: Changed `esp_cam::` to `esp_camera::`
                     esp_camera::esp_camera_fb_return(fb); 
-                    warn!("Stream connection dropped by host browser."); 
-                    break; 
                 } 
-
-                // Fix 4: Changed `esp_sys::` to `esp_camera::` since return is a camera-module function
-                esp_camera::esp_camera_fb_return(fb); 
-            } 
-            // Control framerate throttle payload balance (~15 FPS) 
-            thread::sleep(Duration::from_millis(65)); 
+            } else {
+                break; // Channel closed
+            }
         } 
-        Ok::<(), esp_idf_svc::sys::EspError>(()) 
+        Ok::<(), esp_idf_svc::sys::EspError>(())
     })?; 
 
-    // Keep main thread alive indefinitely alongside the active server thread context 
     loop { 
         thread::sleep(Duration::from_secs(1)); 
     } 
 } 
 
-/// Asynchronous function handling the connection state engine 
 async fn connect_wifi(wifi: &mut AsyncWifi<EspWifi<'static>>) -> anyhow::Result<()> { 
     info!("Setting up Wi-Fi configurations..."); 
     let auth_modes = [ 
@@ -168,16 +184,19 @@ async fn connect_wifi(wifi: &mut AsyncWifi<EspWifi<'static>>) -> anyhow::Result<
     Err(anyhow::anyhow!("Could not connect using any supported authentication standard")) 
 } 
 
-/// Helper function implementing unsafe FFI structures to pipe pin profiles into C 
 fn init_camera() -> anyhow::Result<()> { 
     unsafe { 
-        // Fix 5: Resolves directly through esp_sys
         let config = esp_camera::camera_config_t { 
             pin_pwdn: PIN_PWDN, 
             pin_reset: PIN_RESET, 
             pin_xclk: PIN_XCLK, 
-            //pin_sccb_sda: PIN_SDA, 
-            //pin_sccb_scl: PIN_SCL, 
+            // Fix: Map your I2C pins into the modern C-Union anonymous struct mappings
+            __bindgen_anon_1: esp_camera::camera_config_t__bindgen_ty_1 {
+                pin_sccb_sda: PIN_SDA,
+            },
+            __bindgen_anon_2: esp_camera::camera_config_t__bindgen_ty_2 {
+                pin_sccb_scl: PIN_SCL,
+            },
             pin_d7: PIN_D7, 
             pin_d6: PIN_D6, 
             pin_d5: PIN_D5, 
@@ -189,9 +208,9 @@ fn init_camera() -> anyhow::Result<()> {
             pin_vsync: PIN_VSYNC, 
             pin_href: PIN_HREF, 
             pin_pclk: PIN_PCLK, 
-            xclk_freq_hz: 20000000, 
-            ledc_timer: esp_sys::ledc_timer_t_LEDC_TIMER_0, 
-            ledc_channel: esp_sys::ledc_channel_t_LEDC_CHANNEL_0, 
+            xclk_freq_hz: 10000000, // Safe 10 MHz profile optimal for OV3660 stability
+            ledc_timer: esp_camera::ledc_timer_t_LEDC_TIMER_0, 
+            ledc_channel: esp_camera::ledc_channel_t_LEDC_CHANNEL_0, 
             pixel_format: esp_camera::pixformat_t_PIXFORMAT_JPEG, 
             frame_size: esp_camera::framesize_t_FRAMESIZE_VGA, 
             jpeg_quality: 12, 
@@ -201,13 +220,11 @@ fn init_camera() -> anyhow::Result<()> {
             ..Default::default() 
         }; 
 
-        // Fix 6: Call directly via unified system path
         let err = esp_camera::esp_camera_init(&config); 
         if err != esp_sys::ESP_OK { 
             return Err(anyhow::anyhow!("Failed to initialize camera device OV3660, error code: {}", err)); 
         } 
 
-        // Fix 7: Changed `esp_cam::` to `esp_camera::`
         let sensor = esp_camera::esp_camera_sensor_get(); 
         if !sensor.is_null() { 
             ((*sensor).set_vflip.unwrap())(sensor, 1); 
