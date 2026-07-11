@@ -1,6 +1,0 @@
-[workspace]
-members = [
-    "firmware",
-    "local_server",
-]
-resolver = "3"
