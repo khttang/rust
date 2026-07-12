@@ -36,6 +36,8 @@ tokio = { version = "1.52.3", features = ["time"] }
 embuild = "0.33"
 
 [package.metadata.esp-idf-sys]
+# Explicitly force esp-idf-sys to map and merge through your local defaults file!
+sdkconfig_defaults = ["sdkconfig.defaults"]
 
 [[package.metadata.esp-idf-sys.extra_components]]
 component_dirs = ["esp32-camera"]
