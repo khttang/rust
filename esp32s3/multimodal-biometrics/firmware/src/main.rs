@@ -23,13 +23,13 @@ const PIN_D1: i32 = 9;
 const PIN_D2: i32 = 8; 
 const PIN_D3: i32 = 10; 
 const PIN_D4: i32 = 12; 
-const PIN_D5: i32 = 14; 
+const PIN_D5: i32 = 18; 
 const PIN_D6: i32 = 17; 
 const PIN_D7: i32 = 16; 
 const PIN_XCLK: i32 = 15; 
 const PIN_PCLK: i32 = 13; 
-const PIN_VSYNC: i32 = 42; 
-const PIN_HREF: i32 = 18; 
+const PIN_VSYNC: i32 = 6; 
+const PIN_HREF: i32 = 7; 
 const PIN_SDA: i32 = 4; 
 const PIN_SCL: i32 = 5; 
 const PIN_RESET: i32 = -1; 
@@ -204,66 +204,82 @@ async fn connect_wifi(wifi: &mut AsyncWifi<EspWifi<'static>>) -> anyhow::Result<
 } 
 
 fn init_camera() -> anyhow::Result<()> { 
-    unsafe { 
-        let config = esp_camera::camera_config_t { 
-            pin_pwdn: PIN_PWDN, 
-            pin_reset: PIN_RESET, 
-            pin_xclk: PIN_XCLK, 
-            // Fix: Map your I2C pins into the modern C-Union anonymous struct mappings
-            __bindgen_anon_1: esp_camera::camera_config_t__bindgen_ty_1 {
-                pin_sccb_sda: PIN_SDA,
-            },
-            __bindgen_anon_2: esp_camera::camera_config_t__bindgen_ty_2 {
-                pin_sccb_scl: PIN_SCL,
-            },
-            pin_d7: PIN_D7, 
-            pin_d6: PIN_D6, 
-            pin_d5: PIN_D5, 
-            pin_d4: PIN_D4, 
-            pin_d3: PIN_D3, 
-            pin_d2: PIN_D2, 
-            pin_d1: PIN_D1, 
-            pin_d0: PIN_D0, 
-            pin_vsync: PIN_VSYNC, 
-            pin_href: PIN_HREF, 
-            pin_pclk: PIN_PCLK, 
-            xclk_freq_hz: 10_000_000, // Safe 10 MHz profile optimal for OV3660 stability
-            ledc_timer: esp_camera::ledc_timer_t_LEDC_TIMER_0, 
-            ledc_channel: esp_camera::ledc_channel_t_LEDC_CHANNEL_0, 
-            pixel_format: esp_camera::pixformat_t_PIXFORMAT_JPEG, 
-            frame_size: esp_camera::framesize_t_FRAMESIZE_SVGA, 
-            jpeg_quality: 10,         // Higher number = smaller frame payloads = happy DMA bus 
-            fb_count: 2,              // Increase to 3 to provide DMA node breathing room
-            fb_location: esp_camera::camera_fb_location_t_CAMERA_FB_IN_PSRAM, 
+    unsafe {
+        // 1. Explicitly zero out the C struct to safely handle all hidden bindgen padding/unions
+        let mut config: esp_camera::camera_config_t = std::mem::zeroed();
 
-            // --- CHANGE THIS FROM CAMERA_GRAB_WHEN_EMPTY TO CAMERA_GRAB_LATEST ---
-            grab_mode: esp_camera::camera_grab_mode_t_CAMERA_GRAB_LATEST,
-            sccb_i2c_port: 0,
-            ..Default::default() 
-        }; 
+        // 2. Assign control and clock lines
+        config.pin_pwdn = PIN_PWDN;
+        config.pin_reset = PIN_RESET;
+        config.pin_xclk = PIN_XCLK;
+        
+        // 3. Map I2C pins into the modern C-Union anonymous struct mappings
+        config.__bindgen_anon_1 = esp_camera::camera_config_t__bindgen_ty_1 {
+            pin_sccb_sda: PIN_SDA,
+        };
+        config.__bindgen_anon_2 = esp_camera::camera_config_t__bindgen_ty_2 {
+            pin_sccb_scl: PIN_SCL,
+        };
 
-        let err = esp_camera::esp_camera_init(&config); 
-        if err != esp_sys::ESP_OK { 
-            return Err(anyhow::anyhow!("Failed to initialize camera device OV3660, error code: {}", err)); 
+        // 4. Assign the corrected parallel data bus and synchronization lines
+        config.pin_d7 = PIN_D7;
+        config.pin_d6 = PIN_D6;
+        config.pin_d5 = PIN_D5;
+        config.pin_d4 = PIN_D4;
+        config.pin_d3 = PIN_D3;
+        config.pin_d2 = PIN_D2;
+        config.pin_d1 = PIN_D1;
+        config.pin_d0 = PIN_D0;
+        config.pin_vsync = PIN_VSYNC;
+        config.pin_href = PIN_HREF;
+        config.pin_pclk = PIN_PCLK;
+
+        // 5. DMA Engine and Frequency Tunings
+        config.xclk_freq_hz = 10_000_000; // Safe 10 MHz profile optimal for OV3660 stability
+        config.ledc_timer = esp_camera::ledc_timer_t_LEDC_TIMER_0;
+        config.ledc_channel = esp_camera::ledc_channel_t_LEDC_CHANNEL_0;
+        config.pixel_format = esp_camera::pixformat_t_PIXFORMAT_JPEG;
+        config.frame_size = esp_camera::framesize_t_FRAMESIZE_SVGA;
+        config.jpeg_quality = 10;
+        config.fb_count = 3; // Increased to 3 to provide DMA node breathing room
+        config.fb_location = esp_camera::camera_fb_location_t_CAMERA_FB_IN_PSRAM;
+        config.grab_mode = esp_camera::camera_grab_mode_t_CAMERA_GRAB_LATEST;
+        
+        // Set to -1 to force the driver to use its internal software I2C engine, 
+        // preventing conflicts with external esp-idf-hal I2C drivers on Port 0.
+        config.sccb_i2c_port = -1; 
+
+        // 6. Initialize the hardware driver
+        let err = esp_camera::esp_camera_init(&config);
+        if err != esp_sys::ESP_OK {
+            return Err(anyhow::anyhow!("Failed to initialize camera device OV3660, error code: {}", err));
         }
 
-        // This directly alters the S3's internal LCD_CAM hardware configuration register 1
-        // to add a 1-cycle sampling delay on the physical PCLK line input trace
-        let lcd_cam_reg = 0x60040000 as *mut u32; 
+        // 7. Inject the 1-cycle sampling delay on the physical PCLK line input trace
+        let lcd_cam_reg = 0x60040000 as *mut u32;
         if !lcd_cam_reg.is_null() {
             let current_val = std::ptr::read_volatile(lcd_cam_reg);
             std::ptr::write_volatile(lcd_cam_reg, current_val | (1 << 26)); // Enable PCLK rx delay gate
         }
 
+        // 8. Configure image orientation
         let sensor = esp_camera::esp_camera_sensor_get();
         if !sensor.is_null() {
-            ((*sensor).set_vflip.unwrap())(sensor, 1);
+            ((*sensor).set_vflip.unwrap())(sensor, 0);
             ((*sensor).set_hmirror.unwrap())(sensor, 1);
+            /*
+            if let Some(set_vflip) = (*sensor).set_vflip {
+                set_vflip(sensor, 0);
+            }
+            if let Some(set_hmirror) = (*sensor).set_hmirror {
+                set_hmirror(sensor, 1);
+            }
+            */
         }
-
-        info!("OV3660 camera sensor calibrated and running inside its own module namespace!"); 
-    } 
-    Ok(()) 
+        
+        log::info!("OV3660 camera sensor calibrated and running inside its own module namespace!");
+    }
+    Ok(())
 }
 
 extern "C" fn native_camera_producer_task(params: *mut core::ffi::c_void) {
