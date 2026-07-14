@@ -1,9 +1,9 @@
 use edge_executor::LocalExecutor; 
-use esp_idf_svc::hal::peripherals::Peripherals; 
+use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::hal::gpio::{PinDriver, AnyOutputPin};
 use esp_idf_svc::http::server::{Configuration, EspHttpServer}; 
 use esp_idf_svc::sys as esp_sys; 
 use esp_idf_sys::camera as esp_camera; 
-//use esp_idf_svc::log::EspLogger; 
 use esp_idf_svc::eventloop::EspSystemEventLoop; 
 use esp_idf_svc::nvs::EspDefaultNvsPartition; 
 use esp_idf_svc::wifi::{AsyncWifi, AuthMethod, ClientConfiguration, Configuration as WifiConfiguration, EspWifi}; 
@@ -11,7 +11,6 @@ use esp_idf_svc::timer::EspTaskTimerService;
 use futures::executor::block_on; 
 use log::{error, info, warn}; 
 use std::time::Duration; 
-//use std::ffi::c_char; 
 use std::thread; 
 
 const WIFI_SSID: &str = "SpectrumSetup-AC"; 
@@ -46,13 +45,44 @@ fn main() -> anyhow::Result<()> {
     esp_idf_svc::log::EspLogger::initialize_default(); 
     info!("Initializing ESP32-S3 async Wi-Fi system..."); 
 
-    let peripherals = Peripherals::take()?; 
+    let peripherals = Peripherals::take().map_err(|_| {
+        anyhow::anyhow!("Peripherals allocation failed — Core resources already consumed!")
+    })?; 
     let sys_loop = EspSystemEventLoop::take()?; 
     let nvs = EspDefaultNvsPartition::take()?; 
     let timer_service = EspTaskTimerService::new()?; 
 
+    // Read Knowledge Base from SD Card
+    /*
+    let embeddings = {
+        // Isolate pins needed for the 1-bit SDMMC execution block
+        let clk = peripherals.pins.gpio39;
+        let cmd = peripherals.pins.gpio38;
+        let d0  = peripherals.pins.gpio40;
+
+        log::info!("Mounting SD card to load face vectors into RAM...");
+        // during this time, must ensure that RGB LED is not exercised
+
+        init_sd_card(clk, cmd, d0)?; 
+        
+        let data = read_embeddings_from_file("/sdcard/knowledge.json")?;
+        
+        // Critical Step: Cleanly unmount and release the SDMMC driver 
+        // to return GPIO 38/40 back to the unallocated hardware pool.
+        deinit_sd_card()?; 
+        log::info!("SD Card unmounted. Pins released.");
+        
+        data // Return the loaded data vectors out of the temporary block
+    };
+    */
+
+    // Now that the SD card is safely turned off, you can reuse the exact 
+    // same physical pin to drive your status indicator without any conflicts.
+    let heartbeat_pin = AnyOutputPin::from(peripherals.pins.gpio38);
+    // Launch the indicator task thread using the freed copper trace
+    spawn_basic_heartbeat(heartbeat_pin)?;
+
     info!("Initializing camera subsystem..."); 
-    //init_camera()?; 
 
     // --- DECOUPLING: ASYNC CHANNEL BOUNDED TO 1 FRAME ---
     // If the browser drops frames, the background thread drops frames automatically
@@ -343,6 +373,53 @@ extern "C" fn native_camera_producer_task(params: *mut core::ffi::c_void) {
             }
         }
     }
+}
+
+// 1. Create a zero-cost wrapper structure to hold our raw pointer
+struct SendRawPtr(*mut AnyOutputPin<'static>);
+
+// 2. Explicitly tell the compiler that transferring this raw address between threads is safe
+unsafe impl Send for SendRawPtr {}
+
+pub fn spawn_basic_heartbeat(pin: AnyOutputPin) -> anyhow::Result<()> {
+    // 3. Transmute or unsafe cast the pin's local lifetime to a static one 
+    // so it can safely live inside an independent background thread.
+    let static_pin: AnyOutputPin<'static> = unsafe { std::mem::transmute(pin) };
+
+    // 4. Box it up and turn it into a raw pointer
+    let boxed_pin = Box::new(static_pin);
+    let raw_pin_ptr = Box::into_raw(boxed_pin);
+    
+    // 5. Wrap the pointer inside our thread-safe Send token container
+    let thread_safe_token = SendRawPtr(raw_pin_ptr);
+
+    thread::Builder::new()
+        .name("heartbeat_task".to_string())
+        .stack_size(2048)
+        .spawn(move || {
+            // 6. Extract the pointer from our wrapped token and reconstruct the owned pin
+            let token = thread_safe_token;
+            let owned_pin = unsafe { *Box::from_raw(token.0) };
+
+            let mut led = match PinDriver::output(owned_pin) {
+                Ok(driver) => driver,
+                Err(e) => {
+                    log::error!("Failed to instantiate basic LED driver: {:?}", e);
+                    return;
+                }
+            };
+
+            log::info!("Era 2: Running non-blocking basic bit-toggle heartbeat on GPIO 38.");
+
+            loop {
+                if let Err(e) = led.toggle() {
+                    log::error!("LED toggle error: {:?}", e);
+                }
+                thread::sleep(Duration::from_millis(500));
+            }
+        })?;
+
+    Ok(())
 }
 
 /// Independent biometric transformation worker function.
