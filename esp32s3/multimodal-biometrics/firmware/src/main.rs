@@ -1,6 +1,7 @@
 mod sd_card;
 mod camera;
 mod wifi;
+mod audio;
 mod heart_beat;
 
 use esp_idf_sys::camera as esp_camera; 
@@ -19,6 +20,7 @@ use std::thread;
 use sd_card::{init_sd_card, deinit_sd_card};
 
 use crate::camera::{SendPtr, SendSender, native_camera_producer_task};
+use crate::audio::{native_audio_mic_pump_task, native_audio_spk_pump_task};
 use crate::wifi::connect_wifi;
 use crate::heart_beat::spawn_basic_heartbeat;
 
@@ -73,13 +75,13 @@ fn main() -> anyhow::Result<()> {
     unsafe {
         let boxed_sender = Box::new(SendSender(tx));
         let param_ptr = Box::into_raw(boxed_sender) as *mut core::ffi::c_void;
-        let task_name = std::ffi::CString::new("native_cam_task").unwrap();
+        let task_name = b"native_cam_task\0";
         let mut task_handle: esp_idf_sys::TaskHandle_t = std::ptr::null_mut();
 
         let result = esp_idf_sys::xTaskCreatePinnedToCore(
             Some(native_camera_producer_task), // Task implementation function
-            task_name.as_ptr(),               // Diagnostic name string
-            8192,                              // Allocate plenty of stack memory for Rust vectors
+            task_name.as_ptr() as *const core::ffi::c_char,  // Diagnostic name string
+            16384,                             // Bounded upward to 16KB to insulate Rust runtime allocations
             param_ptr,                         // Pass the raw boxed async channel pointer
             24,                                // PRIORITY: Higher than Wi-Fi driver task (23)
             &mut task_handle,                  // Task handle pointer allocation
@@ -87,7 +89,60 @@ fn main() -> anyhow::Result<()> {
         );
 
         if result != 1 { // FreeRTOS pdPASS = 1
+            // Prevent a memory leak if the task completely fails to spawn
+            let _ = Box::from_raw(param_ptr as *mut SendSender);
             panic!("Fatal: Failed to spawn high-priority camera worker task!");
+        }
+    }
+
+    // --- AUDIO SUBSYSTEM INITIALIZATION ---
+    let audio_system = audio::init_audio_subsystem().expect("Fatal: Failed to initialize hardware I2S audio driver!");
+
+    // Allocate async channels for passing voice buffers across threads
+    let (audio_tx, audio_rx) = async_channel::bounded::<Vec<i16>>(10); // Standard 16-bit PCM voice frames
+
+    // --- TASK C: THE BACKGROUND MICROPHONE PRODUCER TASK ---
+    unsafe {
+        let rx_handle_raw = audio_system.rx_handle as *mut core::ffi::c_void;
+        let boxed_audio_tx = Box::new(audio_tx);
+        let param_ptr = Box::into_raw(Box::new((rx_handle_raw, boxed_audio_tx))) as *mut core::ffi::c_void;
+        
+        let task_name = b"native_mic_task\0";
+        let mut task_handle: esp_idf_sys::TaskHandle_t = std::ptr::null_mut();
+        
+        let result = esp_idf_sys::xTaskCreatePinnedToCore(
+            Some(native_audio_mic_pump_task),
+            task_name.as_ptr() as *const core::ffi::c_char,
+            8192, // 8KB stack space for audio frame buffering
+            param_ptr,
+            24,   // PRIORITY: Matching high-priority camera loop for synchronized capture
+            &mut task_handle,
+            1,    // CORE ID: Pinned to Core 1 to bypass Wi-Fi interrupts
+        );
+        
+        if result != 1 {
+            panic!("Fatal: Failed to spawn high-priority audio microphone task!");
+        }
+    }
+
+    // --- TASK D: THE BACKGROUND SPEAKER PLAYBACK CONSUMER TASK ---
+    unsafe {
+        let tx_handle_raw = audio_system.tx_handle as *mut core::ffi::c_void;
+        let task_name = b"native_spk_task\0";
+        let mut task_handle: esp_idf_sys::TaskHandle_t = std::ptr::null_mut();
+        
+        let result = esp_idf_sys::xTaskCreatePinnedToCore(
+            Some(native_audio_spk_pump_task),
+            task_name.as_ptr() as *const core::ffi::c_char,
+            4096, 
+            tx_handle_raw,
+            22,   // PRIORITY: Slightly lower than Wi-Fi (23) so the network engine can feed it safely
+            &mut task_handle,
+            0,    // CORE ID: Bind to Core 0 next to the network socket processors
+        );
+        
+        if result != 1 {
+            panic!("Fatal: Failed to spawn speaker playback worker task!");
         }
     }
 
@@ -105,7 +160,12 @@ fn main() -> anyhow::Result<()> {
         } else { 
             info!("Wi-Fi cycle successfully completed!"); 
         } 
-    }))); 
+    })));
+
+    unsafe {
+        // Force Wi-Fi to run at full power with zero power-saving sleep cycles
+        esp_idf_sys::esp_wifi_set_ps(0); // ESP_WIFI_PS_NONE = 0
+    } 
 
     let mut server = EspHttpServer::new(&Configuration::default())?; 
     info!("HTTP Server running on port 80. Path: /stream"); 

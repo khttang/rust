@@ -59,13 +59,13 @@ pub fn init_camera() -> anyhow::Result<()> {
         config.pin_pclk = PIN_PCLK;
 
         // 5. DMA Engine and Frequency Tunings
-        config.xclk_freq_hz = 10_000_000; // Safe 10 MHz profile optimal for OV3660 stability
+        config.xclk_freq_hz = 13_000_000; // Safe 13 MHz profile optimal for OV3660 stability
+        config.jpeg_quality = 15;
+        config.fb_count = 2;              // Increased to 3 to provide DMA node breathing room
         config.ledc_timer = esp_camera::ledc_timer_t_LEDC_TIMER_0;
         config.ledc_channel = esp_camera::ledc_channel_t_LEDC_CHANNEL_0;
         config.pixel_format = esp_camera::pixformat_t_PIXFORMAT_JPEG;
         config.frame_size = esp_camera::framesize_t_FRAMESIZE_SVGA;
-        config.jpeg_quality = 10;
-        config.fb_count = 3; // Increased to 3 to provide DMA node breathing room
         config.fb_location = esp_camera::camera_fb_location_t_CAMERA_FB_IN_PSRAM;
         config.grab_mode = esp_camera::camera_grab_mode_t_CAMERA_GRAB_LATEST;
         
@@ -103,58 +103,43 @@ pub extern "C" fn native_camera_producer_task(params: *mut core::ffi::c_void) {
     
     let tx_wrapper = unsafe { Box::from_raw(params as *mut SendSender) };
     let tx = tx_wrapper.0;
-
+    
     info!("Initializing camera subsystem hardware directly on Core 1...");
     if let Err(e) = init_camera() {
         error!("Fatal Error: Camera hardware initialization failed on Core 1: {:?}", e);
         unsafe { esp_idf_sys::vTaskDelete(std::ptr::null_mut()); }
         return;
     }
-    info!("Camera ISR and hardware pipeline cleanly mapped to Core 1.");
+    
+    info!("Camera ISR and hardware pipeline cleanly mapped to Core 1 and fully awake.");
 
-    // --- FORCE HARDWARE WAKE & START STREAMING ---
-    unsafe {
-        let sensor = esp_camera::esp_camera_sensor_get();
-        if !sensor.is_null() {
-            // Force the OV3660 internal power-down register to 0 (Fully Awake Operational Mode)
-            if let Some(set_reg) = (*sensor).set_reg {
-                // Register 0x3008 handles sleep modes on the OV3660 array matrix
-                // Writing 0x02 or 0x00 wakes up the digital core lines forcefully
-                set_reg(sensor, 0x3008, 0xFF, 0x02); 
-            }
-            
-            // Re-assert the target framesize directly inside the sensor control registers
-            if let Some(set_framesize) = (*sensor).set_framesize {
-                set_framesize(sensor, esp_camera::framesize_t_FRAMESIZE_SVGA);
-            }
-            
-            info!("OV3660 Digital Engine awakened. Parallel lines active.");
-        }
-    }
-    info!("Camera ISR and hardware pipeline cleanly mapped to Core 1.");
+    let mut frame_counter: u32 = 0;
 
     loop {
         unsafe {
             let fb = esp_camera::esp_camera_fb_get();
-            
             if !fb.is_null() {
-                if (*fb).len > 0 {
-                    if let Err(_) = tx.try_send(SendPtr(fb)) {
+                frame_counter += 1;
+
+                // ONLY process every 4th frame (adjust based on stability)
+                if frame_counter % 4 == 0 {
+                    if (*fb).len > 0 {
+                        if let Err(_) = tx.try_send(SendPtr(fb)) {
+                            // Channel is backed up, return it immediately
+                            esp_camera::esp_camera_fb_return(fb);
+                        }
+                    } else {
                         esp_camera::esp_camera_fb_return(fb);
-                        esp_idf_sys::vTaskDelay(1);
                     }
                 } else {
+                    // Instantly drop the other 3 frames back to the driver 
+                    // This prevents the hardware DMA engine from overflowing!
                     esp_camera::esp_camera_fb_return(fb);
-                    esp_idf_sys::vTaskDelay(1);
                 }
+                
+                // Give a tiny sliver of time back to FreeRTOS scheduler
+                esp_idf_sys::vTaskDelay(1);
             } else {
-                // If a frame drops or times out, pulse the wake register to ensure it stays online
-                let sensor = esp_camera::esp_camera_sensor_get();
-                if !sensor.is_null() {
-                    if let Some(set_reg) = (*sensor).set_reg {
-                        set_reg(sensor, 0x3008, 0xFF, 0x02);
-                    }
-                }
                 esp_idf_sys::vTaskDelay(5);
             }
         }
