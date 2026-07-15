@@ -13,10 +13,7 @@ build-std = ["std", "panic_abort"]
 MCU = "esp32s3"
 ESP_IDF_VERSION = "v5.5.3"
 ESP_IDF_TOOLS_INSTALL_DIR = "global"
-
-# Uncomment this if you have moved the target dir by setting CARGO_TARGET_DIR or similar.
-# Required for now due to embuild limitations.
-#CARGO_WORKSPACE_DIR = { value = "", relative = true }
+ESP_IDF_SYS_PYTHON_PATH = "/opt/homebrew/opt/python@3.12/bin/python3.12"
 
 # The only component directory variable you need:
 IDF_EXTRA_COMPONENT_DIRS = { value = "${CARGO_MANIFEST_DIR}/esp32-camera" }
