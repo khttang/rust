@@ -42,7 +42,7 @@ pub fn init_audio_subsystem() -> anyhow::Result<AudioSystem> {
 
         // Universal Helper Fix: Initialize the subconfig blocks using the official ESP-IDF helper macro shims.
         // This ensures the correct underlying clock source types are passed cleanly to the HAL wrapper!
-        let mut rx_std_cfg: sys::i2s_std_config_t = sys::i2s_std_config_t {
+        let rx_std_cfg: sys::i2s_std_config_t = sys::i2s_std_config_t {
             clk_cfg: sys::i2s_std_clk_config_t {
                 sample_rate_hz: 16000,
                 // Fix: Double-cast the explicit 160MHz PLL enum variant to pass Rust's type-checker cleanly

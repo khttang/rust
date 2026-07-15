@@ -34,6 +34,7 @@ fn main() -> anyhow::Result<()> {
     let sys_loop = EspSystemEventLoop::take()?; 
     let nvs = EspDefaultNvsPartition::take()?; 
     let timer_service = EspTaskTimerService::new()?; 
+    let mut net_pwd: String = String::new();
 
     // Read Knowledge Base from SD Card
     let freed_gpio38 = {
@@ -48,6 +49,9 @@ fn main() -> anyhow::Result<()> {
         let (_returned_clk, returned_cmd, _returned_d0) = init_sd_card(clk, cmd, d0)?; 
         
         let data = read_embeddings_from_file()?;
+        if let Ok(pwd) = read_password_from_file() {
+            net_pwd = pwd;
+        }
         
         // Critical Step: Cleanly unmount and release the SDMMC driver 
         // to return GPIO 38/40 back to the unallocated hardware pool.
@@ -155,7 +159,7 @@ fn main() -> anyhow::Result<()> {
     let executor: LocalExecutor = edge_executor::LocalExecutor::new(); 
 
     block_on(executor.run(Box::pin(async { 
-        if let Err(e) = connect_wifi(&mut wifi).await { 
+        if let Err(e) = connect_wifi(&mut wifi, &net_pwd).await { 
             warn!("Failed to establish network connection: {:?}", e); 
         } else { 
             info!("Wi-Fi cycle successfully completed!"); 
@@ -254,12 +258,24 @@ use std::fs::File;
 use std::io::Read;
 
 /// Reads the raw text string profile data from your card using standard Rust IO.
-pub fn read_embeddings_from_file() -> anyhow::Result<String> {
+fn read_embeddings_from_file() -> anyhow::Result<String> {
     log::info!("Opening database file from filesystem store...");
     
     // Target your file directly inside the mounted directory namespace tree
     let mut file = File::open("/sdcard/EMBEDS.JSN")
         .map_err(|e| anyhow::anyhow!("Could not find EMBEDS.JSN on the root of your SD card: {:?}", e))?;
+        
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    
+    Ok(contents)
+}
+
+fn read_password_from_file() -> anyhow::Result<String> {
+    log::info!("Reading network password from filesystem store...");
+
+    let mut file = File::open("/sdcard/NETWORK.PWD")
+        .map_err(|e| anyhow::anyhow!("Could not find NETWORK.PWD on the root of your SD card: {:?}", e))?;
         
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
