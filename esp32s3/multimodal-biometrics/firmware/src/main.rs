@@ -1,3 +1,5 @@
+mod sd_card;
+
 use edge_executor::LocalExecutor; 
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::gpio::{PinDriver, AnyOutputPin};
@@ -12,6 +14,7 @@ use futures::executor::block_on;
 use log::{error, info, warn}; 
 use std::time::Duration; 
 use std::thread; 
+use sd_card::{init_sd_card, deinit_sd_card};
 
 const WIFI_SSID: &str = "SpectrumSetup-AC"; 
 const WIFI_PASS: &str = "T@ngn3t2025"; 
@@ -53,8 +56,7 @@ fn main() -> anyhow::Result<()> {
     let timer_service = EspTaskTimerService::new()?; 
 
     // Read Knowledge Base from SD Card
-    /*
-    let embeddings = {
+    let freed_gpio38 = {
         // Isolate pins needed for the 1-bit SDMMC execution block
         let clk = peripherals.pins.gpio39;
         let cmd = peripherals.pins.gpio38;
@@ -63,22 +65,21 @@ fn main() -> anyhow::Result<()> {
         log::info!("Mounting SD card to load face vectors into RAM...");
         // during this time, must ensure that RGB LED is not exercised
 
-        init_sd_card(clk, cmd, d0)?; 
+        let (_returned_clk, returned_cmd, _returned_d0) = init_sd_card(clk, cmd, d0)?; 
         
-        let data = read_embeddings_from_file("/sdcard/knowledge.json")?;
+        let data = read_embeddings_from_file()?;
         
         // Critical Step: Cleanly unmount and release the SDMMC driver 
         // to return GPIO 38/40 back to the unallocated hardware pool.
         deinit_sd_card()?; 
         log::info!("SD Card unmounted. Pins released.");
         
-        data // Return the loaded data vectors out of the temporary block
+        returned_cmd // Return the loaded data vectors out of the temporary block
     };
-    */
 
     // Now that the SD card is safely turned off, you can reuse the exact 
     // same physical pin to drive your status indicator without any conflicts.
-    let heartbeat_pin = AnyOutputPin::from(peripherals.pins.gpio38);
+    let heartbeat_pin = AnyOutputPin::from(freed_gpio38);
     // Launch the indicator task thread using the freed copper trace
     spawn_basic_heartbeat(heartbeat_pin)?;
 
@@ -439,4 +440,21 @@ fn cleanse_and_detect_face(jpeg_data: &[u8]) -> anyhow::Result<()> {
     // info!("Cleansed biometric packet received. Size: {} bytes", jpeg_data.len());
     
     Ok(())
+}
+
+use std::fs::File;
+use std::io::Read;
+
+/// Reads the raw text string profile data from your card using standard Rust IO.
+pub fn read_embeddings_from_file() -> anyhow::Result<String> {
+    log::info!("Opening database file from filesystem store...");
+    
+    // Target your file directly inside the mounted directory namespace tree
+    let mut file = File::open("/sdcard/EMBEDS.JSN")
+        .map_err(|e| anyhow::anyhow!("Could not find EMBEDS.JSN on the root of your SD card: {:?}", e))?;
+        
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    
+    Ok(contents)
 }
