@@ -1,10 +1,12 @@
+use core::convert::TryInto;
+
 use esp_idf_svc::wifi::{AsyncWifi, AuthMethod, ClientConfiguration, Configuration as WifiConfiguration, EspWifi}; 
+use anyhow::anyhow;
 use log::{info, warn}; 
 
-const WIFI_SSID: &str = "SpectrumSetup-AC"; 
-const WIFI_PASS: &str = "T@ngn3t2025"; 
+const WIFI_SSID: &str = "SpectrumSetup-AC";
 
-pub async fn connect_wifi(wifi: &mut AsyncWifi<EspWifi<'static>>) -> anyhow::Result<()> { 
+pub async fn connect_wifi(wifi: &mut AsyncWifi<EspWifi<'static>>, net_pwd: &str) -> anyhow::Result<()> { 
     info!("Setting up Wi-Fi configurations..."); 
     let auth_modes = [ 
         (AuthMethod::WPA2WPA3Personal, "WPA2/WPA3 Mixed (With PMF)"), 
@@ -14,7 +16,7 @@ pub async fn connect_wifi(wifi: &mut AsyncWifi<EspWifi<'static>>) -> anyhow::Res
         info!("Attempting connection using mode: {}", description); 
         let wifi_configuration = WifiConfiguration::Client(ClientConfiguration { 
             ssid: WIFI_SSID.try_into().unwrap(), 
-            password: WIFI_PASS.try_into().unwrap(), 
+            password: net_pwd.try_into().unwrap(), 
             auth_method: method, 
             ..Default::default() 
         }); 
@@ -42,5 +44,5 @@ pub async fn connect_wifi(wifi: &mut AsyncWifi<EspWifi<'static>>) -> anyhow::Res
         info!("Successfully connected! IP Details: {:?}", ip_info); 
         return Ok(()); 
     } 
-    Err(anyhow::anyhow!("Could not connect using any supported authentication standard")) 
+    Err(anyhow!("Could not connect using any supported authentication standard")) 
 }

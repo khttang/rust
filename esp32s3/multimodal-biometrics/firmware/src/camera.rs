@@ -1,6 +1,7 @@
 use esp_idf_svc::sys as esp_sys; 
-use esp_idf_sys::camera as esp_camera; 
-use log::{error, info}; 
+use esp_idf_sys::camera as esp_camera;
+use anyhow::anyhow;
+use log::{info, error};
 
 // --- CAMERA PIN MAP FOR ESP32-S3 --- 
 const PIN_D0: i32 = 11; 
@@ -23,9 +24,6 @@ const PIN_PWDN: i32 = -1;
 // A wrapper to safely send raw pointer framebuffers across threads
 pub struct SendPtr(pub *mut esp_camera::camera_fb_t);
 unsafe impl Send for SendPtr {}
-
-pub struct SendSender(pub async_channel::Sender<SendPtr>);
-unsafe impl Send for SendSender {}
 
 pub fn init_camera() -> anyhow::Result<()> { 
     unsafe {
@@ -61,7 +59,7 @@ pub fn init_camera() -> anyhow::Result<()> {
         // 5. DMA Engine and Frequency Tunings
         config.xclk_freq_hz = 13_000_000; // Safe 13 MHz profile optimal for OV3660 stability
         config.jpeg_quality = 15;
-        config.fb_count = 2;              // Increased to 3 to provide DMA node breathing room
+        config.fb_count = 1;              // Increased to 3 to provide DMA node breathing room
         config.ledc_timer = esp_camera::ledc_timer_t_LEDC_TIMER_0;
         config.ledc_channel = esp_camera::ledc_channel_t_LEDC_CHANNEL_0;
         config.pixel_format = esp_camera::pixformat_t_PIXFORMAT_JPEG;
@@ -76,7 +74,7 @@ pub fn init_camera() -> anyhow::Result<()> {
         // 6. Initialize the hardware driver
         let err = esp_camera::esp_camera_init(&config);
         if err != esp_sys::ESP_OK {
-            return Err(anyhow::anyhow!("Failed to initialize camera device OV3660, error code: {}", err));
+            return Err(anyhow!("Failed to initialize camera device OV3660, error code: {}", err));
         }
 
         // 7. Inject the 1-cycle sampling delay on the physical PCLK line input trace
@@ -93,26 +91,21 @@ pub fn init_camera() -> anyhow::Result<()> {
             ((*sensor).set_hmirror.unwrap())(sensor, 1);
         }
         
-        log::info!("OV3660 camera sensor calibrated and running inside its own module namespace!");
+        info!("OV3660 camera sensor calibrated and running inside its own module namespace!");
     }
     Ok(())
 }
 
-pub extern "C" fn native_camera_producer_task(params: *mut core::ffi::c_void) {
-    info!("Real-time high-priority FreeRTOS camera capture pump active on Core 1.");
+pub unsafe extern "C" fn native_camera_producer_task(params: *mut core::ffi::c_void) {
+    let tx_wrapper = unsafe { Box::from_raw(params as *mut async_channel::Sender<SendPtr>) };
+    let video_tx = *tx_wrapper;
     
-    let tx_wrapper = unsafe { Box::from_raw(params as *mut SendSender) };
-    let tx = tx_wrapper.0;
-    
-    info!("Initializing camera subsystem hardware directly on Core 1...");
     if let Err(e) = init_camera() {
         error!("Fatal Error: Camera hardware initialization failed on Core 1: {:?}", e);
         unsafe { esp_idf_sys::vTaskDelete(std::ptr::null_mut()); }
         return;
     }
     
-    info!("Camera ISR and hardware pipeline cleanly mapped to Core 1 and fully awake.");
-
     let mut frame_counter: u32 = 0;
 
     loop {
@@ -121,23 +114,15 @@ pub extern "C" fn native_camera_producer_task(params: *mut core::ffi::c_void) {
             if !fb.is_null() {
                 frame_counter += 1;
 
-                // ONLY process every 4th frame (adjust based on stability)
-                if frame_counter % 4 == 0 {
-                    if (*fb).len > 0 {
-                        if let Err(_) = tx.try_send(SendPtr(fb)) {
-                            // Channel is backed up, return it immediately
-                            esp_camera::esp_camera_fb_return(fb);
-                        }
-                    } else {
+                // Frame skip: pass every 4th frame out to the video streaming channel
+                if frame_counter % 4 == 0 && (*fb).len > 0 {
+                    if let Err(_) = video_tx.try_send(SendPtr(fb)) {
+                        // If the channel is full, clear the frame immediately
                         esp_camera::esp_camera_fb_return(fb);
                     }
                 } else {
-                    // Instantly drop the other 3 frames back to the driver 
-                    // This prevents the hardware DMA engine from overflowing!
                     esp_camera::esp_camera_fb_return(fb);
                 }
-                
-                // Give a tiny sliver of time back to FreeRTOS scheduler
                 esp_idf_sys::vTaskDelay(1);
             } else {
                 esp_idf_sys::vTaskDelay(5);

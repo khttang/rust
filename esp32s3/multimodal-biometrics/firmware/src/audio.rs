@@ -1,5 +1,6 @@
 use esp_idf_sys as sys;
-use log::info;
+use log::{info, warn};
+use anyhow::anyhow;
 
 // --- SAFE, CONFLICT-FREE AUDIO PIN DEFINITIONS ---
 const PIN_MIC_WS: i32 = 41;
@@ -25,8 +26,8 @@ pub fn init_audio_subsystem() -> anyhow::Result<AudioSystem> {
         let host_cfg = sys::i2s_chan_config_t {
             id: sys::i2s_port_t_I2S_NUM_0, 
             role: sys::i2s_role_t_I2S_ROLE_MASTER,
-            dma_desc_num: 6,      
-            dma_frame_num: 240,   
+            dma_desc_num: 3,      
+            dma_frame_num: 128,   
             auto_clear_before_cb: true, // Safely drops out stale fragments on latency bottlenecks
             allow_pd: false,            // Keep peripheral powered up during processing loops
             intr_priority: 0,
@@ -37,12 +38,12 @@ pub fn init_audio_subsystem() -> anyhow::Result<AudioSystem> {
 
         let err = sys::i2s_new_channel(&host_cfg, &mut tx_handle, &mut rx_handle);
         if err != sys::ESP_OK {
-            return Err(anyhow::anyhow!("Failed to instantiate I2S port channels: {}", err));
+            return Err(anyhow!("Failed to instantiate I2S port channels: {}", err));
         }
 
         // Universal Helper Fix: Initialize the subconfig blocks using the official ESP-IDF helper macro shims.
         // This ensures the correct underlying clock source types are passed cleanly to the HAL wrapper!
-        let mut rx_std_cfg: sys::i2s_std_config_t = sys::i2s_std_config_t {
+        let rx_std_cfg: sys::i2s_std_config_t = sys::i2s_std_config_t {
             clk_cfg: sys::i2s_std_clk_config_t {
                 sample_rate_hz: 16000,
                 // Fix: Double-cast the explicit 160MHz PLL enum variant to pass Rust's type-checker cleanly
@@ -79,7 +80,7 @@ pub fn init_audio_subsystem() -> anyhow::Result<AudioSystem> {
 
         let err = sys::i2s_channel_init_std_mode(rx_handle, &rx_std_cfg);
         if err != sys::ESP_OK {
-            return Err(anyhow::anyhow!("Failed to map Microphone configuration to I2S slot: {}", err));
+            return Err(anyhow!("Failed to map Microphone configuration to I2S slot: {}", err));
         }
 
         // Configure the Speaker Out Channel
@@ -105,7 +106,7 @@ pub fn init_audio_subsystem() -> anyhow::Result<AudioSystem> {
 
         let err = sys::i2s_channel_init_std_mode(tx_handle, &tx_std_cfg);
         if err != sys::ESP_OK {
-            return Err(anyhow::anyhow!("Failed to map Speaker configuration to I2S slot: {}", err));
+            return Err(anyhow!("Failed to map Speaker configuration to I2S slot: {}", err));
         }
 
         // Wake and activate both DMA engines
@@ -128,7 +129,7 @@ pub unsafe extern "C" fn native_audio_mic_pump_task(params: *mut core::ffi::c_vo
     let mut raw_samples = [0i16; 512]; // 16-bit signed PCM integer format
     let mut bytes_read: usize = 0;
 
-    log::info!("Microphone DMA stream pipeline active on Core 1.");
+    info!("Microphone DMA stream pipeline active on Core 1.");
 
     loop {
         let err = esp_idf_svc::sys::i2s_channel_read(
@@ -158,7 +159,7 @@ pub unsafe extern "C" fn native_audio_spk_pump_task(params: *mut core::ffi::c_vo
     let tx_handle = params as esp_idf_svc::sys::i2s_chan_handle_t;
     let mut bytes_written: usize = 0;
 
-    log::info!("Speaker DMA playback pump active on Core 0.");
+    info!("Speaker DMA playback pump active on Core 0.");
 
     loop {
         // ---> FETCH INCOMING PCM AUDIO PACKETS FROM YOUR SYNTHESIZER OR WEBSOCKET HERE <---
@@ -174,7 +175,7 @@ pub unsafe extern "C" fn native_audio_spk_pump_task(params: *mut core::ffi::c_vo
         );
 
         if err != esp_idf_svc::sys::ESP_OK {
-            log::warn!("Speaker hardware pipeline encountered a TX underflow error.");
+            warn!("Speaker hardware pipeline encountered a TX underflow error.");
         }
 
         // Keep a 10ms pacing yield interval
