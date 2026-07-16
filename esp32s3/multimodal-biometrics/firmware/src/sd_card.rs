@@ -2,6 +2,8 @@ use std::ffi::CString;
 use esp_idf_sys as esp_sys;
 use esp_idf_svc::hal::gpio::{Gpio38, Gpio39, Gpio40};
 use esp_idf_svc::hal::gpio::Pin; // Activates clk.pin() trait methods
+use anyhow::anyhow;
+use log::info;
 
 /// Initializes and mounts the onboard Goouuu MicroSD card by consuming the necessary pins.
 pub fn init_sd_card<'a>(
@@ -10,7 +12,7 @@ pub fn init_sd_card<'a>(
     d0: Gpio40<'a>
 ) -> anyhow::Result<(Gpio39<'a>, Gpio38<'a>, Gpio40<'a>)> {
     
-    log::info!("Era 1 Bootstrap: Initializing 1-bit SDMMC host partition via CMake component shim...");
+    info!("Era 1 Bootstrap: Initializing 1-bit SDMMC host partition via CMake component shim...");
 
     unsafe {
         // 1. Fetch the pre-hydrated template structure straight from your isolated component namespace!
@@ -66,13 +68,10 @@ pub fn init_sd_card<'a>(
         );
 
         if ret != esp_sys::ESP_OK {
-            return Err(anyhow::anyhow!(
-                "SDMMC mount transaction failed! ESP-IDF Error Code: {}", 
-                ret
-            ));
+            return Err(anyhow!("SDMMC mount transaction failed! ESP-IDF Error Code: {}", ret));
         }
 
-        log::info!("Success! MicroSD card cleanly mounted at `/sdcard` namespace path.");
+        info!("Success! MicroSD card cleanly mounted at `/sdcard` namespace path.");
     }
     
     Ok((clk, cmd, d0))
@@ -81,14 +80,14 @@ pub fn init_sd_card<'a>(
 /// Safely unmounts the file system and unlinks the host driver, freeing up GPIO 38.
 pub fn deinit_sd_card() -> anyhow::Result<()> {
     unsafe {
-        log::info!("De-initializing storage drivers to release shared trace copper lines...");
+        info!("De-initializing storage drivers to release shared trace copper lines...");
         
         let ret = esp_sys::esp_vfs_fat_sdmmc_unmount();
         if ret != esp_sys::ESP_OK {
-            return Err(anyhow::anyhow!("Failed to unmount SD VFS partition wrapper cleanly. Code: {}", ret));
+            return Err(anyhow!("Failed to unmount SD VFS partition wrapper cleanly. Code: {}", ret));
         }
         
-        log::info!("SDMMC driver completely purged. Shared pins are now safe to repurpose.");
+        info!("SDMMC driver completely purged. Shared pins are now safe to repurpose.");
     }
     Ok(())
 }

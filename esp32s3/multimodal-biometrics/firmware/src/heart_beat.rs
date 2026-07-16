@@ -1,4 +1,5 @@
 use esp_idf_svc::hal::gpio::{PinDriver, AnyOutputPin};
+use log::{info, error};
 use std::thread; 
 use std::time::Duration; 
 
@@ -31,16 +32,16 @@ pub fn spawn_basic_heartbeat(pin: AnyOutputPin) -> anyhow::Result<()> {
             let mut led = match PinDriver::output(owned_pin) {
                 Ok(driver) => driver,
                 Err(e) => {
-                    log::error!("Failed to instantiate basic LED driver: {:?}", e);
+                    error!("Failed to instantiate basic LED driver: {:?}", e);
                     return;
                 }
             };
 
-            log::info!("Era 2: Running non-blocking basic bit-toggle heartbeat on GPIO 38.");
+            info!("Era 2: Running non-blocking basic bit-toggle heartbeat on GPIO 38.");
 
             loop {
                 if let Err(e) = led.toggle() {
-                    log::error!("LED toggle error: {:?}", e);
+                    error!("LED toggle error: {:?}", e);
                 }
                 thread::sleep(Duration::from_millis(500));
             }

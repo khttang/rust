@@ -1,6 +1,7 @@
 use core::convert::TryInto;
 
 use esp_idf_svc::wifi::{AsyncWifi, AuthMethod, ClientConfiguration, Configuration as WifiConfiguration, EspWifi}; 
+use anyhow::anyhow;
 use log::{info, warn}; 
 
 const WIFI_SSID: &str = "SpectrumSetup-AC";
@@ -43,5 +44,5 @@ pub async fn connect_wifi(wifi: &mut AsyncWifi<EspWifi<'static>>, net_pwd: &str)
         info!("Successfully connected! IP Details: {:?}", ip_info); 
         return Ok(()); 
     } 
-    Err(anyhow::anyhow!("Could not connect using any supported authentication standard")) 
+    Err(anyhow!("Could not connect using any supported authentication standard")) 
 }
