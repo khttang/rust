@@ -16,14 +16,14 @@ use edge_executor::LocalExecutor;
 use futures::executor::block_on;
 use log::{error, info, warn};  
 use sd_card::{init_sd_card, deinit_sd_card};
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 
 use crate::camera::{SendPtr, native_camera_producer_task};
 use crate::audio::{native_audio_mic_pump_task, native_audio_spk_pump_task};
 use crate::wifi::connect_wifi;
 use crate::heart_beat::spawn_basic_heartbeat;
 
-fn main() -> anyhow::Result<()> { 
+fn main() -> Result<()> { 
     esp_idf_svc::log::EspLogger::initialize_default(); 
     info!("Initializing ESP32-S3 async Wi-Fi system..."); 
 
@@ -280,15 +280,15 @@ fn main() -> anyhow::Result<()> {
         // Prevent the async block from returning instantly.
         // This keeps the server running and processing on Core 0!
         loop {
-            //let _: () = futures_util::future::pending().await;
             futures_util::pending!(); // Yields execution gracefully to the other spawned tasks
+                                      // same as let _: () = futures_util::future::pending().await;
         }
     })))
 }  
 
 /// Independent biometric transformation worker function.
 /// Takes a cleanly copied JPEG vector array from the active camera queue.
-fn cleanse_and_detect_face(jpeg_data: &[u8]) -> anyhow::Result<()> {
+fn cleanse_and_detect_face(jpeg_data: &[u8]) -> Result<()> {
     // 1. In a production pipeline (e.g., using tfmicro or esp-who), 
     // you would decode the JPEG payload into a raw RGB888 pixel array.
     if jpeg_data.is_empty() {
@@ -314,7 +314,7 @@ use std::fs::File;
 use std::io::Read;
 
 /// Reads the raw text string profile data from your card using standard Rust IO.
-fn read_embeddings_from_file() -> anyhow::Result<String> {
+fn read_embeddings_from_file() -> Result<String> {
     info!("Opening database file from filesystem store...");
     
     // Target your file directly inside the mounted directory namespace tree
@@ -327,7 +327,7 @@ fn read_embeddings_from_file() -> anyhow::Result<String> {
     Ok(contents)
 }
 
-fn read_password_from_file() -> anyhow::Result<String> {
+fn read_password_from_file() -> Result<String> {
     info!("Reading network password from filesystem store...");
 
     let mut file = File::open("/sdcard/NETWORK.PWD")

@@ -1,6 +1,6 @@
 use esp_idf_svc::sys as esp_sys; 
 use esp_idf_sys::camera as esp_camera;
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 use log::{info, error};
 
 // --- CAMERA PIN MAP FOR ESP32-S3 --- 
@@ -25,7 +25,7 @@ const PIN_PWDN: i32 = -1;
 pub struct SendPtr(pub *mut esp_camera::camera_fb_t);
 unsafe impl Send for SendPtr {}
 
-pub fn init_camera() -> anyhow::Result<()> { 
+pub fn init_camera() -> Result<()> { 
     unsafe {
         // 1. Explicitly zero out the C struct to safely handle all hidden bindgen padding/unions
         let mut config: esp_camera::camera_config_t = std::mem::zeroed();
@@ -59,7 +59,7 @@ pub fn init_camera() -> anyhow::Result<()> {
         // 5. DMA Engine and Frequency Tunings
         config.xclk_freq_hz = 13_000_000; // Safe 13 MHz profile optimal for OV3660 stability
         config.jpeg_quality = 15;
-        config.fb_count = 1;              // Increased to 3 to provide DMA node breathing room
+        config.fb_count = 2;              // Increased to 3 to provide DMA node breathing room
         config.ledc_timer = esp_camera::ledc_timer_t_LEDC_TIMER_0;
         config.ledc_channel = esp_camera::ledc_channel_t_LEDC_CHANNEL_0;
         config.pixel_format = esp_camera::pixformat_t_PIXFORMAT_JPEG;
@@ -116,14 +116,18 @@ pub unsafe extern "C" fn native_camera_producer_task(params: *mut core::ffi::c_v
 
                 // Frame skip: pass every 4th frame out to the video streaming channel
                 if frame_counter % 4 == 0 && (*fb).len > 0 {
-                    if let Err(_) = video_tx.try_send(SendPtr(fb)) {
-                        // If the channel is full, clear the frame immediately
+                    if video_tx.is_full() {
+                        // Discard the frame immediately. 
+                        // Because fb_count=2, the hardware alternates slots safely!
                         esp_camera::esp_camera_fb_return(fb);
+                    } else if let Err(_) = video_tx.try_send(SendPtr(fb)) {
+                        // If the channel is full, clear the frame immediately
+                        esp_camera::esp_camera_fb_return(fb);                   
                     }
                 } else {
                     esp_camera::esp_camera_fb_return(fb);
                 }
-                esp_idf_sys::vTaskDelay(1);
+                esp_idf_sys::vTaskDelay(2);
             } else {
                 esp_idf_sys::vTaskDelay(5);
             }

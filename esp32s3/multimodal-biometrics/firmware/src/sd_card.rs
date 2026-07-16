@@ -2,7 +2,7 @@ use std::ffi::CString;
 use esp_idf_sys as esp_sys;
 use esp_idf_svc::hal::gpio::{Gpio38, Gpio39, Gpio40};
 use esp_idf_svc::hal::gpio::Pin; // Activates clk.pin() trait methods
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 use log::info;
 
 /// Initializes and mounts the onboard Goouuu MicroSD card by consuming the necessary pins.
@@ -10,7 +10,7 @@ pub fn init_sd_card<'a>(
     clk: Gpio39<'a>, 
     cmd: Gpio38<'a>, 
     d0: Gpio40<'a>
-) -> anyhow::Result<(Gpio39<'a>, Gpio38<'a>, Gpio40<'a>)> {
+) -> Result<(Gpio39<'a>, Gpio38<'a>, Gpio40<'a>)> {
     
     info!("Era 1 Bootstrap: Initializing 1-bit SDMMC host partition via CMake component shim...");
 
@@ -78,7 +78,7 @@ pub fn init_sd_card<'a>(
 }
 
 /// Safely unmounts the file system and unlinks the host driver, freeing up GPIO 38.
-pub fn deinit_sd_card() -> anyhow::Result<()> {
+pub fn deinit_sd_card() -> Result<()> {
     unsafe {
         info!("De-initializing storage drivers to release shared trace copper lines...");
         
