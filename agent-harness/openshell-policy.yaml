@@ -1,0 +1,72 @@
+# OpenShell sandbox policy for agent-harness.
+#
+# Schema: NVIDIA OpenShell v0.0.116 policy reference. Checked field by field
+# against the published schema; not yet run through the OpenShell CLI.
+# Rationale and review notes: docs/security-architecture.md.
+#
+# Assumes the release binary is installed at /app/agent-harness.
+# Credentials: attach OpenShell `anthropic` / `openai` providers to the sandbox
+# so the agent only sees placeholders; never put real keys in this file.
+# Ollama: run with OLLAMA_API_BASE_URL=http://host.openshell.internal:11434
+
+version: 1
+
+# Static: locked at sandbox creation.
+filesystem_policy:
+  include_workdir: false
+  read_only:
+    - /app/agent-harness   # the executable, not src/
+    - /usr
+    - /lib
+    - /etc                 # CA bundle for TLS, resolv.conf
+  read_write:
+    - /tmp
+    # - /app/secure_vault  # only once a persistence layer exists
+
+# Static: never run with a filesystem gap.
+landlock:
+  compatibility: hard_requirement
+
+# Static: never root.
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+# Dynamic: hot-reloadable with `openshell policy update` / `set`.
+# Each endpoint allows only the single request rig 0.42 makes.
+network_policies:
+  anthropic:
+    name: anthropic-api
+    endpoints:
+      - host: api.anthropic.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: /v1/messages }
+    binaries:
+      - path: /app/agent-harness
+
+  openai:
+    name: openai-api
+    endpoints:
+      - host: api.openai.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: /v1/responses }
+    binaries:
+      - path: /app/agent-harness
+
+  ollama:
+    name: ollama-host
+    endpoints:
+      - host: host.openshell.internal
+        port: 11434
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: /api/chat }
+    binaries:
+      - path: /app/agent-harness

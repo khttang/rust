@@ -1,0 +1,13 @@
+# Ignore heavy cargo compilation pipelines
+target/
+.cargo/
+Cargo.lock
+
+# Ignore system configuration states and local logs
+.env
+*.log
+secure_vault/
+
+# Ignore typical system and git directories
+.git/
+.DS_Store
