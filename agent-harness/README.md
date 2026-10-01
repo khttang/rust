@@ -118,6 +118,26 @@ pub trait ChatRuntime: Send + Sync {
 
 `chat` builds a `CompletionRequest` with a leading `Message::system(preamble)` (omitted when empty), the history and the tool definitions, runs `validate_message_content()`, and wraps provider failures with `"completion request failed"` context. `prompt_agent` is `chat` with a one-message history and no tools; a reply with no text is an error.
 
+#### When to use single-shot
+
+`AgentLoop` is for open-ended work where the model chooses the steps. `ModelRuntime` is for steps where your code fixes the flow and the model fills in one step. The bundled CLI no longer calls it, so it is a library entry point for that kind of pipeline:
+
+- **No tools by type.** Code generic over `R: ModelRuntime` cannot reach a tool, and the compiler enforces it. Use it on untrusted input (logs, tickets, web content): a prompt injection in the input has nothing to trigger.
+- **Stateless steps:** classify, summarize, extract, rerank, check an answer. Each call stands alone, so there is no history to grow or trim.
+- **Parallel fan-out.** No shared `&mut Conversation`, so independent calls run concurrently (e.g. `join_all` over many inputs).
+- **One-method backends and mocks.** A test double or a completion-only engine implements one method instead of `ChatRuntime`.
+
+Example: a root-cause analyzer over system health signals uses single-shot calls for most steps and the loop only where tools are needed:
+
+```
+signals ──► [ModelRuntime] summarize each window   (parallel, untrusted input, no tools)
+        ──► [ModelRuntime] classify anomaly / severity
+        ──► [AgentLoop]    investigate: query metrics, correlate, propose a cause
+        ──► [ModelRuntime] check the proposed cause against the evidence
+```
+
+Answers are plain `String` today. Typed answers (via `CompletionRequest.output_schema`) would make it a better fit for pipelines; see [Limitations](#limitations).
+
 ### The agent loop
 
 `AgentLoop<R: ChatRuntime, P: ApprovalPolicy = AutoApprove, O: Observer = NoopObserver>` owns the runtime, a `ToolRegistry`, the policy, the observer and `max_turns` (default `DEFAULT_MAX_TURNS` = 8). It does **not** own conversation state: a `Conversation` is passed to `run` by `&mut`, so one loop can serve many conversations and a conversation survives a model switch (`runtime_mut().set_model(...)`).
@@ -586,6 +606,7 @@ All tests are unit tests next to each module; none calls a live provider API.
 - **Unbounded conversation.** Every turn is resent. There is no windowing or summarisation yet; `/reset` starts over.
 - **Model support for tools varies.** The loop needs structured tool calls; some local models emit them as plain text.
 - **Memory is not persisted** and is lost on exit. Compaction eviction is permanent within the process.
+- **Text-only answers.** `prompt_agent` returns a `String` and the loop's final answer is text; there is no typed output via `CompletionRequest.output_schema` yet.
 - **Non-streaming.** `ProviderModel` forwards `stream()`, but neither runtime trait has a streaming method.
 - **Sequential tools.** Tool calls within a turn run one at a time, trading latency for deterministic side effects.
 - **Sandbox policy is a draft.** See [Security model](#security-model).
