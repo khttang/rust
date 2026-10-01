@@ -306,6 +306,13 @@ async fn approved_fix_is_accepted_and_fully_audited() {
     );
     let ev = events(&audit);
     assert_eq!(ev[0]["task"], "fix-greeting");
+    assert!(
+        ev[0]["build"]["rustc"]
+            .as_str()
+            .unwrap()
+            .starts_with("rustc 1.")
+    );
+    assert!(!ev[0]["build"]["target"].as_str().unwrap().is_empty());
     assert_eq!(ev[0]["inputs"][0]["path"], "greeting.txt");
     assert_eq!(ev[0]["tools"][0]["risk"], "read_only");
     assert_eq!(ev[0]["tools"][1]["risk"], "mutating");

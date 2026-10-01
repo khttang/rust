@@ -26,7 +26,7 @@ pub mod tools;
 pub mod validate;
 pub mod workspace;
 
-pub use audit::{AuditError, AuditEvent, AuditLog, verify_chain};
+pub use audit::{AuditError, AuditEvent, AuditLog, BuildInfo, verify_chain};
 pub use error::HarnessError;
 pub use harness::{
     AdaptiveMemoryLayer, AgentLoop, AssistantTurn, ChatRuntime, CompactionPolicy, CompactionReport,

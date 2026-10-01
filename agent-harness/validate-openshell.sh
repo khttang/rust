@@ -7,7 +7,8 @@
 #
 # Steps:
 #   1. preflight   gateway connected; supervisor can reach it from the docker host
-#   2. build       aarch64/x86_64 linux binary in rust:1.95, then sandbox.Dockerfile
+#   2. build       aarch64/x86_64 linux binary in rust:1.95 (pinned by digest),
+#                  then sandbox.Dockerfile (base pinned by digest)
 #   3. policy      the effective policy matches the file (plus gateway baseline)
 #   4. enforce     identity, filesystem and egress probes inside one sandbox
 #   5. provider    credential injection via providers/openai.yaml
@@ -32,6 +33,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 POLICY="$ROOT/openshell-policy.yaml"
 IMAGE="agent-harness-sandbox:dev"
+# The build toolchain, pinned by digest (a multi-arch index) so the same
+# commit always builds with the same compiler. Debian trixie: the base in
+# sandbox.Dockerfile must stay trixie too so glibc matches. To update, pull
+# the new tag and take `docker inspect <tag> --format '{{index .RepoDigests 0}}'`.
+RUST_IMAGE="rust:1.95@sha256:f49565f188ee00bc2a18dd418183f2c5f23ef7d6e691890517ed341a598f67c3"
 # Sandbox names are capped at 19 characters (OpenShell 0.1.2).
 PREFIX="ahv-$$"
 SKIP_BUILD=0
@@ -87,9 +93,13 @@ case "$(docker version --format '{{.Server.Arch}}')" in
 esac
 BIN="$ROOT/target/$TRIPLE_DIR/release/agent-harness"
 if [[ $SKIP_BUILD -eq 0 ]]; then
-  log "2/5 build (rust:1.95 -> target/$TRIPLE_DIR, then $IMAGE)"
-  # rust:1.95 is Debian trixie; sandbox.Dockerfile must stay on trixie (glibc).
-  docker run --rm -v "$ROOT":/src -w /src -e CARGO_TARGET_DIR="/src/target/$TRIPLE_DIR" rust:1.95 \
+  # The commit the binary is built from, recorded in every run_started
+  # audit record; "-dirty" when agent-harness/ has uncommitted changes.
+  COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+  [[ -z "$(git -C "$ROOT" status --porcelain -- . 2>/dev/null)" ]] || COMMIT="$COMMIT-dirty"
+  log "2/5 build (${RUST_IMAGE%@*} @ commit $COMMIT -> target/$TRIPLE_DIR, then $IMAGE)"
+  docker run --rm -v "$ROOT":/src -w /src -e CARGO_TARGET_DIR="/src/target/$TRIPLE_DIR" \
+    -e AGENT_HARNESS_GIT_COMMIT="$COMMIT" "$RUST_IMAGE" \
     sh -c 'apt-get -qq update >/dev/null && apt-get -qq install -y cmake >/dev/null 2>&1; cargo build --release --locked --quiet'
   mkdir -p "$ROOT/.sandbox/image"
   cp "$BIN" "$ROOT/.sandbox/image/agent-harness"

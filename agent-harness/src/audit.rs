@@ -42,6 +42,35 @@ use crate::{
 /// `prev` of the first record.
 pub const GENESIS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
+/// What built this binary, recorded in every `run_started` record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct BuildInfo {
+    pub harness_version: String,
+    /// From `AGENT_HARNESS_GIT_COMMIT` at build time; `-dirty` marks
+    /// uncommitted changes. `None` if it was not set.
+    pub git_commit: Option<String>,
+    /// `rustc --version` of the compiler that built the binary.
+    pub rustc: String,
+    /// Target triple, e.g. `aarch64-unknown-linux-gnu`.
+    pub target: String,
+    /// Cargo profile: `debug` or `release`.
+    pub profile: String,
+}
+
+impl BuildInfo {
+    /// The identity embedded in this binary by `build.rs`.
+    pub fn current() -> Self {
+        Self {
+            harness_version: env!("CARGO_PKG_VERSION").to_owned(),
+            git_commit: option_env!("AGENT_HARNESS_GIT_COMMIT").map(str::to_owned),
+            rustc: env!("AGENT_HARNESS_RUSTC_VERSION").to_owned(),
+            target: env!("AGENT_HARNESS_BUILD_TARGET").to_owned(),
+            profile: env!("AGENT_HARNESS_BUILD_PROFILE").to_owned(),
+        }
+    }
+}
+
 /// A tool offered to the model, as recorded at the start of a run.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ToolRecord {
@@ -52,16 +81,20 @@ pub struct ToolRecord {
 }
 
 /// One audited event. New kinds may be added.
+///
+/// Variant sizes differ a lot (`RunStarted` is large). That is intended: an
+/// event is built, serialized and dropped right away, never stored in bulk,
+/// so boxing the large variant would only add an allocation.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[non_exhaustive]
+#[allow(clippy::large_enum_variant)]
 pub enum AuditEvent {
     /// Everything needed to identify and reproduce the run's configuration.
     RunStarted {
         task: String,
-        harness_version: String,
-        /// Set at build time through `AGENT_HARNESS_GIT_COMMIT`, if provided.
-        git_commit: Option<String>,
+        /// Harness version, git commit, compiler, target and profile.
+        build: BuildInfo,
         runtime: RuntimeInfo,
         max_turns: usize,
         preamble: String,
@@ -434,11 +467,6 @@ fn redact_value(value: &mut Value) {
     }
 }
 
-/// The build's git commit, when `AGENT_HARNESS_GIT_COMMIT` was set at build time.
-pub fn git_commit() -> Option<String> {
-    option_env!("AGENT_HARNESS_GIT_COMMIT").map(str::to_owned)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -614,6 +642,19 @@ mod tests {
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
         std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn build_info_identifies_the_compiler() {
+        let build = BuildInfo::current();
+        assert_eq!(build.harness_version, env!("CARGO_PKG_VERSION"));
+        assert!(build.rustc.starts_with("rustc 1."), "{}", build.rustc);
+        assert!(!build.target.is_empty());
+        assert!(
+            ["debug", "release"].contains(&build.profile.as_str()),
+            "{}",
+            build.profile
+        );
     }
 
     #[test]

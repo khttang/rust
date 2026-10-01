@@ -31,7 +31,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::{
-    audit::{AuditError, AuditEvent, AuditLog, ToolRecord, git_commit},
+    audit::{AuditError, AuditEvent, AuditLog, BuildInfo, ToolRecord},
     error::HarnessError,
     harness::{AgentLoop, AssistantTurn, ChatRuntime, Conversation, DEFAULT_MAX_TURNS, RunOutcome},
     observer::{NoopObserver, Observer},
@@ -398,8 +398,7 @@ where
 
         self.audit.record(AuditEvent::RunStarted {
             task: task.name().to_owned(),
-            harness_version: env!("CARGO_PKG_VERSION").to_owned(),
-            git_commit: git_commit(),
+            build: BuildInfo::current(),
             runtime: self.runtime.describe(),
             max_turns: task.max_turns(),
             preamble: preamble.clone(),

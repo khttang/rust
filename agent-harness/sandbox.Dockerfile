@@ -5,7 +5,8 @@
 # curl is included only so the validation can show that binaries other than
 # /app/agent-harness are denied egress; drop it for a production image.
 
-FROM debian:trixie-slim
+# Pinned by digest (a multi-arch index) for reproducible builds.
+FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \

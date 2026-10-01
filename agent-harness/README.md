@@ -83,6 +83,7 @@ sandbox.Dockerfile       Sandbox image used by validate-openshell.sh
 providers/openai.yaml    OpenShell provider profile: OpenAI key injection, pinned to the harness
 crates/                  Extension crates (agent-harness-tools-*, agent-harness-task-*); see crates/README.md
 Cargo.toml               Workspace root: shared versions (one rig-core for every crate) + the core crate
+build.rs                 Embeds rustc version, target and profile for the audit trail (BuildInfo)
 LICENSE-MIT, LICENSE-APACHE
 ```
 
@@ -493,7 +494,7 @@ Steps:
 ./validate-openshell.sh [--skip-build]
 ```
 
-Needs a running OpenShell gateway with the `docker` compute driver. It builds a Linux binary in `rust:1.95`, builds `sandbox.Dockerfile`, checks that the gateway reports this policy as effective, then runs probes in one sandbox: the non-root user, seccomp, writes outside `/tmp`, reads outside the allowlist, `curl` (an unpinned binary) to listed and unlisted hosts, and the harness reaching Gemini with a dummy key. A last step attaches a temporary dummy-key provider built from `providers/openai.yaml` and checks that the sandbox sees only a placeholder while OpenAI receives the substituted value. Set `OPENSHELL_LIVE_OPENAI_PROVIDER=<provider>` to add one real call. Exits non-zero on any mismatch. On colima the gateway also needs a relay into the VM; the script detects this and prints the command. See the security doc for setup notes.
+Needs a running OpenShell gateway with the `docker` compute driver. It builds a Linux binary in `rust:1.95` (pinned by digest, with the git commit passed in for the audit trail), builds `sandbox.Dockerfile` (base image pinned by digest), checks that the gateway reports this policy as effective, then runs probes in one sandbox: the non-root user, seccomp, writes outside `/tmp`, reads outside the allowlist, `curl` (an unpinned binary) to listed and unlisted hosts, and the harness reaching Gemini with a dummy key. A last step attaches a temporary dummy-key provider built from `providers/openai.yaml` and checks that the sandbox sees only a placeholder while OpenAI receives the substituted value. Set `OPENSHELL_LIVE_OPENAI_PROVIDER=<provider>` to add one real call. Exits non-zero on any mismatch. On colima the gateway also needs a relay into the VM; the script detects this and prints the command. See the security doc for setup notes.
 
 ### Using the library
 

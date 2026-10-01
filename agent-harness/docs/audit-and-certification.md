@@ -42,9 +42,11 @@ certification plan's decision.
 4. **Tamper-evident and append-only.** Records form a SHA-256 hash chain;
    editing, inserting, deleting or reordering any record is detected by
    `verify_chain`. Log files are created new and never overwritten.
-5. **Configuration identification.** Each run records the harness version
-   (and `AGENT_HARNESS_GIT_COMMIT` when set at build time), the runtime's
-   provider, model, temperature and token budget, the model id the provider
+5. **Configuration identification.** Each run records the build
+   (`BuildInfo`: harness version, git commit with a `-dirty` marker, the
+   `rustc --version` that compiled the binary, target triple and profile,
+   embedded by `build.rs`), the runtime's provider, model, temperature and
+   token budget, the model id the provider
    reports in each response, the SHA-256 of every program run, input and
    output file hashes, the toolset with each tool's risk, and the task's
    sandbox needs.
@@ -83,7 +85,7 @@ One JSON object per line (JSON Lines):
 
 | Kind | Recorded when | Main fields |
 |---|---|---|
-| `run_started` | before the loop | task, harness version, git commit, runtime, max turns, preamble, prompt, input, input file hashes, tools with risk, sandbox needs |
+| `run_started` | before the loop | task, build (harness version, git commit, rustc version, target, profile), runtime, max turns, preamble, prompt, input, input file hashes, tools with risk, sandbox needs |
 | `model_turn` | each model response | turn, full content, usage, provider, reported model, response and request ids |
 | `tool_call` | each requested call | turn, call id, name, arguments, risk, approval and decider |
 | `tool_result` | after each call | turn, call id, name, ok, output or error text |
@@ -108,6 +110,18 @@ println!("{} records, last hash {}", summary.records, summary.last_hash);
 `prev` mismatch, or sequence gap). The last hash can be stored separately
 (e.g. in a review ticket or a signed release note) so that truncating the end
 of a log is detectable too.
+
+## Reproducible builds
+
+`validate-openshell.sh` builds the sandbox binary in `rust:1.95` and the
+image on `debian:trixie-slim`, both **pinned by digest** (multi-arch
+indexes), and passes the git commit (with `-dirty` for uncommitted changes)
+into the build. The same commit therefore builds with the same compiler and
+base image, and every audit record names both the commit and the compiler.
+Not pinned: the `cmake` package installed from Debian during the build
+(needed by `aws-lc-sys`) and crates.io dependencies beyond `Cargo.lock`'s
+checksums. To move to a new image, pull the tag and copy
+`docker inspect <tag> --format '{{index .RepoDigests 0}}'`.
 
 ## Using it from a task
 

@@ -2,6 +2,8 @@
 //!
 //! Usage: `agent-harness [-m|--model <provider[:model]>] [prompt…]`
 //! Runs one prompt, or starts a REPL if none is given.
+//! `agent-harness --version` prints the build identity (version, git commit,
+//! compiler, target, profile) as JSON, the same `BuildInfo` audit records use.
 //!
 //! Model selection (first match wins): `--model`, `HARNESS_MODEL`, `anthropic`.
 //! Specs look like `anthropic:claude-sonnet-5`, `openai`, `ollama:llama3.2:3b`.
@@ -22,7 +24,7 @@
 use std::io::{self, BufRead, Write};
 
 use agent_harness::{
-    AdaptiveMemoryLayer, AgentLoop, AgentTask, Approval, ApprovalPolicy, AssistantTurn,
+    AdaptiveMemoryLayer, AgentLoop, AgentTask, Approval, ApprovalPolicy, AssistantTurn, BuildInfo,
     CompactionPolicy, CompactionReport, Conversation, Decider, HostedProviderRuntime, ModelSpec,
     Observer, Provider, ProviderModel, ReviewContext, ToolRegistry,
     rig_core::{
@@ -224,6 +226,10 @@ fn parse_args(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if matches!(std::env::args().nth(1).as_deref(), Some("--version" | "-V")) {
+        println!("{}", serde_json::to_string_pretty(&BuildInfo::current())?);
+        return Ok(());
+    }
     let (cli_spec, prompt_args) = parse_args(std::env::args().skip(1))?;
     let spec = cli_spec
         .or_else(|| std::env::var("HARNESS_MODEL").ok())
