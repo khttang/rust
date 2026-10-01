@@ -14,7 +14,7 @@ use rig_core::{
 
 use crate::{
     error::HarnessError,
-    harness::{ChatRuntime, Conversation},
+    harness::{ChatRuntime, Conversation, runtime::RequestTimedOut},
     observer::{NoopObserver, Observer},
     policy::{Approval, ApprovalPolicy, AutoApprove, ReviewContext},
     tool::ToolRegistry,
@@ -30,13 +30,15 @@ pub const DEFAULT_MAX_RETRIES: usize = 2;
 /// (250 ms, then 1 s by default).
 pub const DEFAULT_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 
-/// Whether a runtime error is worth retrying: only what rig classifies as
-/// transient (a request that failed before it was answered, a reply cut
-/// short, a provider's retryable status). Everything else fails at once.
+/// Whether a runtime error is worth retrying: a request that timed out
+/// ([`RequestTimedOut`]), or what rig classifies as transient (a request that
+/// failed before it was answered, a reply cut short, a provider's retryable
+/// status). Everything else fails at once.
 pub fn is_retryable(error: &anyhow::Error) -> bool {
-    error
-        .downcast_ref::<ProviderError>()
-        .is_some_and(ProviderError::is_retryable)
+    error.downcast_ref::<RequestTimedOut>().is_some()
+        || error
+            .downcast_ref::<ProviderError>()
+            .is_some_and(ProviderError::is_retryable)
 }
 
 /// Result of a successful [`AgentLoop::run`]. Fields may be added.

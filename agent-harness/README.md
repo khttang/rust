@@ -137,6 +137,7 @@ pub trait ChatRuntime: Send + Sync {
 |---|---|
 | `new(model)` | Wrap a model. `max_tokens` defaults to `DEFAULT_MAX_TOKENS` (4096), always sent so Anthropic never needs a model-specific default. |
 | `with_max_tokens(n)`, `with_temperature(t)` | Builder-style request settings. |
+| `with_request_timeout(t)` | Limit on one model request, `DEFAULT_REQUEST_TIMEOUT` (300 s) by default; `None` waits forever. A timeout is a `RequestTimedOut` error, which `AgentLoop` retries like a dropped connection. |
 | `model()`, `set_model(new)` | Inspect or replace the model; `set_model` returns the old one. |
 
 `chat` builds a `CompletionRequest` with a leading `Message::system(preamble)` (omitted when empty), the history and the tool definitions, runs `validate_message_content()`, and wraps provider failures with `"completion request failed"` context. `prompt_agent` is `chat` with a one-message history and no tools; a reply with no text is an error.
@@ -163,7 +164,7 @@ Answers are plain `String` today. Typed answers (via `CompletionRequest.output_s
 
 ### The agent loop
 
-`AgentLoop<R: ChatRuntime, P: ApprovalPolicy = AutoApprove, O: Observer = NoopObserver>` owns the runtime, a `ToolRegistry`, the policy, the observer, `max_turns` (default `DEFAULT_MAX_TURNS` = 8) and a retry budget: a model request that fails transiently (what rig's `ProviderError::is_retryable` accepts: a request that failed before it was answered, a reply cut short, a provider's retryable status) is retried up to `DEFAULT_MAX_RETRIES` = 2 times, waiting 250 ms then 1 s (`with_max_retries`, `with_retry_backoff`). Retries do not count as turns, and other errors fail at once. It does **not** own conversation state: a `Conversation` is passed to `run` by `&mut`, so one loop can serve many conversations and a conversation survives a model switch (`runtime_mut().set_model(...)`).
+`AgentLoop<R: ChatRuntime, P: ApprovalPolicy = AutoApprove, O: Observer = NoopObserver>` owns the runtime, a `ToolRegistry`, the policy, the observer, `max_turns` (default `DEFAULT_MAX_TURNS` = 8) and a retry budget: a model request that fails transiently (a `RequestTimedOut`, or what rig's `ProviderError::is_retryable` accepts: a request that failed before it was answered, a reply cut short, a provider's retryable status) is retried up to `DEFAULT_MAX_RETRIES` = 2 times, waiting 250 ms then 1 s (`with_max_retries`, `with_retry_backoff`). Retries do not count as turns, and other errors fail at once. It does **not** own conversation state: a `Conversation` is passed to `run` by `&mut`, so one loop can serve many conversations and a conversation survives a model switch (`runtime_mut().set_model(...)`).
 
 ```rust
 let agent = AgentLoop::new(runtime, tools)        // AutoApprove, NoopObserver
@@ -322,7 +323,7 @@ let report = runner.run(&FixGreeting, input, "path/to/source").await?;
 assert!(report.accepted());                              // decided by the checks, not the model
 ```
 
-The first real task is [`agent-harness-task-verified-fix`](crates/agent-harness-task-verified-fix/README.md): fix a C function until CBMC verifies it, with six acceptance checks that reject the ways a verifier can be satisfied without a real fix.
+The first real task is [`agent-harness-task-verified-fix`](crates/agent-harness-task-verified-fix/README.md): fix a C function until CBMC verifies it, with six acceptance checks that reject the ways a verifier can be satisfied without a real fix. Its first [benchmark](crates/agent-harness-task-verified-fix/bench/2026-10-01/README.md), run in the OpenShell sandbox: `gpt-5.6` accepted 15/15; `gemini-3.5-flash` accepted in every run that finished, but was mostly stopped by its free-tier quota. All 30 audit logs are included and verify.
 
 `TaskRunner::run`:
 

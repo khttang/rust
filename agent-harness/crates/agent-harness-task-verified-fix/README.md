@@ -54,6 +54,7 @@ println!("accepted: {}\n{}", report.accepted(), report.acceptance.report.diff);
 verified-fix run corpus/pitch_overflow --model openai      # a person approves each patch
 HARNESS_AUTO_APPROVE=1 verified-fix run corpus/pitch_overflow   # approve without asking (recorded as policy)
 verified-fix self-test corpus      # no model: CBMC on every case (originals fail, references verify)
+verified-fix bench corpus -m openai:gpt-5.6 -m gemini:gemini-3.5-flash --runs 3 --out results/
 verified-fix sandbox-needs         # programs and egress the task needs, as JSON
 verified-fix --version             # build identity
 ```
@@ -64,6 +65,15 @@ errors. Every run writes a hash-chained audit log (`--audit <file>`, default
 `verified-fix-<case>-<ms>.jsonl`), verified before the report is printed.
 Environment: `HARNESS_MODEL` (default `openai`), the provider's key (a
 placeholder under OpenShell), `CBMC_PATH`.
+
+`bench` runs every case `--runs` times with every model, interleaved (run 1
+of everything, then run 2, ...) so a provider outage hits models evenly.
+Patches are auto-approved and recorded as a policy decision. Each run gets
+its own audit log, verified, and its last hash goes into `results.json`; a
+`summary.md` holds the tables. Every run ends **accepted**, **rejected** (the
+fix failed a check) or **error** (the model API failed after retries, which
+is not a judgement on the model). The library side is `bench::run_bench`,
+generic over the runtime and tested end to end with scripted models.
 
 ## In the OpenShell sandbox
 
@@ -106,5 +116,10 @@ it). Every original fails CBMC and every reference verifies (tested).
 
 Run with real CBMC: `../../test-in-container.sh -p agent-harness-task-verified-fix`.
 
-Next (M5): live runs over the whole corpus with several models, reported as a
-benchmark.
+## Benchmark
+
+[`bench/2026-10-01/`](bench/2026-10-01/README.md): the corpus, 3 runs each,
+in the OpenShell sandbox. `gpt-5.6` was accepted 15/15. `gemini-3.5-flash`
+was accepted in both runs that finished, but 13 runs hit the free tier's
+20-requests-per-day quota (counted as errors, not rejections). All 30 audit
+logs are included and verify.

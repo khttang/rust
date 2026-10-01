@@ -102,6 +102,10 @@ New kinds may be added; consumers should ignore kinds they do not know.
 
 ## Verifying a log
 
+From the command line: `agent-harness verify-audit <file>…` prints each
+log's record count and last hash, or `BROKEN` and the reason; exit code 1 if
+any chain is broken. From Rust:
+
 ```rust
 let summary = agent_harness::verify_chain("run.jsonl")?;
 println!("{} records, last hash {}", summary.records, summary.last_hash);

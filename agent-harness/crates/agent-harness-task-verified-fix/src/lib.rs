@@ -27,6 +27,7 @@
 //! # Ok(()) }
 //! ```
 
+pub mod bench;
 pub mod checks;
 pub mod corpus;
 pub mod csource;

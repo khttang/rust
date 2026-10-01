@@ -9,7 +9,7 @@
 //!   assistant turn (text and/or tool calls) out. Drives
 //!   [`crate::harness::AgentLoop`].
 
-use std::future::Future;
+use std::{future::Future, time::Duration};
 
 use anyhow::{Context, bail};
 use rig_core::{
@@ -204,6 +204,16 @@ where
     }
 }
 
+/// Default limit on one model request. Generous on purpose: some models
+/// take well over a minute per response (gemini-3.5-flash was seen at ~100 s).
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// A model request took longer than the runtime's request timeout. Counted
+/// as transient: `AgentLoop` retries it like a dropped connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("model request timed out after {0:?}")]
+pub struct RequestTimedOut(pub Duration);
+
 /// Default per-request output budget. Always sent, so providers that require
 /// it (e.g. Anthropic) never need a model-specific default.
 pub const DEFAULT_MAX_TOKENS: u64 = 4096;
@@ -218,6 +228,7 @@ pub struct HostedProviderRuntime<M> {
     model: M,
     max_tokens: u64,
     temperature: Option<f64>,
+    request_timeout: Option<Duration>,
 }
 
 impl<M: CompletionBackend> HostedProviderRuntime<M> {
@@ -226,11 +237,19 @@ impl<M: CompletionBackend> HostedProviderRuntime<M> {
             model,
             max_tokens: DEFAULT_MAX_TOKENS,
             temperature: None,
+            request_timeout: Some(DEFAULT_REQUEST_TIMEOUT),
         }
     }
 
     pub fn with_max_tokens(mut self, max_tokens: u64) -> Self {
         self.max_tokens = max_tokens;
+        self
+    }
+
+    /// Limit on one model request ([`DEFAULT_REQUEST_TIMEOUT`] by default);
+    /// `None` waits forever.
+    pub fn with_request_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.request_timeout = timeout;
         self
     }
 
@@ -291,11 +310,15 @@ impl<M: CompletionBackend> ChatRuntime for HostedProviderRuntime<M> {
     ) -> Result<AssistantTurn, anyhow::Error> {
         let request = self.build_request(preamble, history, tools);
         request.validate_message_content()?;
-        let response = self
-            .model
-            .complete(request)
-            .await
-            .context("completion request failed")?;
+        let call = self.model.complete(request);
+        let result = match self.request_timeout {
+            Some(limit) => match tokio::time::timeout(limit, call).await {
+                Ok(result) => result.map_err(anyhow::Error::from),
+                Err(_) => Err(anyhow::Error::new(RequestTimedOut(limit))),
+            },
+            None => call.await.map_err(anyhow::Error::from),
+        };
+        let response = result.context("completion request failed")?;
         Ok(AssistantTurn {
             content: response.choice,
             message_id: response.message_id,
@@ -409,6 +432,44 @@ mod tests {
         assert_eq!(runtime.prompt_agent("", "x").await.unwrap(), "from second");
         assert_eq!(first.request_count(), 0);
         assert_eq!(second.request_count(), 1);
+    }
+
+    /// A backend whose requests never finish.
+    struct Hang;
+
+    impl CompletionBackend for Hang {
+        fn complete(
+            &self,
+            _request: CompletionRequest,
+        ) -> impl Future<Output = Result<CompletionResponse, ProviderError>> + Send {
+            std::future::pending()
+        }
+    }
+
+    #[tokio::test]
+    async fn hung_requests_time_out_as_transient() {
+        let runtime =
+            HostedProviderRuntime::new(Hang).with_request_timeout(Some(Duration::from_millis(20)));
+        let err = runtime
+            .chat("", &[Message::user("hi")], &[])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<RequestTimedOut>(),
+            Some(&RequestTimedOut(Duration::from_millis(20)))
+        );
+        assert!(
+            err.to_string().contains("completion request failed"),
+            "{err:#}"
+        );
+        assert!(crate::harness::is_retryable(&err));
+    }
+
+    #[test]
+    fn default_request_timeout_is_set() {
+        let runtime = HostedProviderRuntime::new(Hang);
+        assert_eq!(runtime.request_timeout, Some(DEFAULT_REQUEST_TIMEOUT));
+        assert_eq!(runtime.with_request_timeout(None).request_timeout, None);
     }
 
     #[test]

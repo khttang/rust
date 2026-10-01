@@ -3,6 +3,7 @@
 //! ```text
 //! verified-fix run <case-dir> [--model <provider[:model]>] [--audit <file>] [--discard-workspace]
 //! verified-fix self-test <corpus-dir> [--audit <file>]
+//! verified-fix bench <corpus-dir> --model <spec> [--model <spec>…] [--runs <n>] [--out <dir>]
 //! verified-fix sandbox-needs
 //! verified-fix --version
 //! ```
@@ -15,6 +16,10 @@
 //!   and reference fix (must verify), audited, and verifies the audit chain.
 //!   Used to prove CBMC works inside the sandbox. Exit code 0 if all as
 //!   expected.
+//! * `bench`: every case `--runs` times (default 3) with every `--model`,
+//!   interleaved, patches auto-approved (recorded as policy). Writes one audit
+//!   log per run plus `results.json` and `summary.md` to `--out` (default
+//!   `bench-<ms>`), and prints the summary. Exit code 0 when it completes.
 //! * `sandbox-needs`: the programs and egress the task needs, as JSON.
 //!
 //! Environment: `HARNESS_MODEL` (default `openai`), provider keys read by rig
@@ -31,7 +36,7 @@ use agent_harness::{
     AuditLog, BuildInfo, ConsoleApproval, HostedProviderRuntime, ModelSpec, ProviderModel,
     RiskGate, StderrObserver, Task, TaskContext, TaskRunner, Workspace, verify_chain,
 };
-use agent_harness_task_verified_fix::{VerifiedFix, corpus};
+use agent_harness_task_verified_fix::{VerifiedFix, bench, corpus};
 use agent_harness_tools_cbmc::{CbmcConfig, identify, verify};
 use serde_json::json;
 
@@ -41,6 +46,7 @@ const DEFAULT_MODEL: &str = "openai";
 const USAGE: &str =
     "usage: verified-fix run <case-dir> [--model <spec>] [--audit <file>] [--discard-workspace]
        verified-fix self-test <corpus-dir> [--audit <file>]
+       verified-fix bench <corpus-dir> --model <spec> [--model <spec>…] [--runs <n>] [--out <dir>]
        verified-fix sandbox-needs
        verified-fix --version";
 
@@ -61,7 +67,10 @@ fn default_audit_path(label: &str) -> PathBuf {
 
 struct Options {
     positional: Vec<String>,
-    model: Option<String>,
+    /// Every `--model` given, in order.
+    models: Vec<String>,
+    runs: Option<usize>,
+    out: Option<PathBuf>,
     audit: Option<PathBuf>,
     discard_workspace: bool,
 }
@@ -69,14 +78,26 @@ struct Options {
 fn parse(args: impl Iterator<Item = String>) -> Result<Options, Error> {
     let mut options = Options {
         positional: Vec::new(),
-        model: None,
+        models: Vec::new(),
+        runs: None,
+        out: None,
         audit: None,
         discard_workspace: false,
     };
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--model" | "-m" => options.model = Some(args.next().ok_or("--model needs a value")?),
+            "--model" | "-m" => options
+                .models
+                .push(args.next().ok_or("--model needs a value")?),
+            "--runs" => {
+                let n: usize = args.next().ok_or("--runs needs a value")?.parse()?;
+                if n == 0 {
+                    return Err("--runs must be at least 1".into());
+                }
+                options.runs = Some(n);
+            }
+            "--out" => options.out = Some(args.next().ok_or("--out needs a value")?.into()),
             "--audit" => options.audit = Some(args.next().ok_or("--audit needs a value")?.into()),
             "--discard-workspace" => options.discard_workspace = true,
             other if other.starts_with('-') => return Err(format!("unknown option {other}").into()),
@@ -92,7 +113,9 @@ async fn run(options: Options) -> Result<bool, Error> {
     };
     let case = corpus::load_case(case_dir)?;
     let spec: ModelSpec = options
-        .model
+        .models
+        .last()
+        .cloned()
         .or_else(|| std::env::var("HARNESS_MODEL").ok())
         .unwrap_or_else(|| DEFAULT_MODEL.to_owned())
         .parse()?;
@@ -198,10 +221,72 @@ async fn self_test(options: Options) -> Result<bool, Error> {
     Ok(all_ok)
 }
 
+async fn bench(options: Options) -> Result<bool, Error> {
+    let [corpus_dir] = options.positional.as_slice() else {
+        return Err(USAGE.into());
+    };
+    if options.models.is_empty() {
+        return Err("bench needs at least one --model".into());
+    }
+    let cases = corpus::load(corpus_dir)?;
+    let mut models = Vec::new();
+    for label in &options.models {
+        let spec: ModelSpec = label.parse()?;
+        models.push((
+            spec.to_string(),
+            HostedProviderRuntime::new(ProviderModel::from_env(spec)?),
+        ));
+    }
+    let runs = options.runs.unwrap_or(3);
+    let out = options.out.unwrap_or_else(|| {
+        let ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
+        PathBuf::from(format!("bench-{ms}"))
+    });
+    std::fs::create_dir_all(&out)?;
+    let total = cases.len() * models.len() * runs;
+    eprintln!(
+        "verified-fix bench: {} cases x {} models x {runs} runs = {total} runs -> {}",
+        cases.len(),
+        models.len(),
+        out.display()
+    );
+
+    let task = VerifiedFix::new(cbmc_config());
+    let mut done = 0;
+    let report = bench::run_bench(&task, &cases, &models, runs, &out, |r| {
+        done += 1;
+        eprintln!(
+            "  [{done}/{total}] {:<26} {:<18} run {}: {:?} ({} turns, {} tokens, {} retries, {:.0}s){}",
+            r.model,
+            r.case,
+            r.run,
+            r.verdict,
+            r.turns.map_or_else(|| "-".to_owned(), |t| t.to_string()),
+            r.total_tokens.map_or_else(|| "-".to_owned(), |t| t.to_string()),
+            r.retries,
+            r.seconds,
+            r.error.as_deref().map(|e| format!(" error: {e}")).unwrap_or_default(),
+        );
+    })
+    .await?;
+
+    let summary = bench::markdown(&report);
+    std::fs::write(
+        out.join("results.json"),
+        serde_json::to_string_pretty(&report)?,
+    )?;
+    std::fs::write(out.join("summary.md"), &summary)?;
+    println!("{summary}");
+    Ok(true)
+}
+
 async fn dispatch(mut args: impl Iterator<Item = String>) -> Result<bool, Error> {
     match args.next().as_deref() {
         Some("run") => run(parse(args)?).await,
         Some("self-test") => self_test(parse(args)?).await,
+        Some("bench") => bench(parse(args)?).await,
         Some("sandbox-needs") => {
             let needs = VerifiedFix::new(cbmc_config()).sandbox();
             println!("{}", serde_json::to_string_pretty(&needs)?);
@@ -258,11 +343,21 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(o.positional, ["case"]);
-        assert_eq!(o.model.as_deref(), Some("openai:gpt-5.6"));
+        assert_eq!(o.models, ["openai:gpt-5.6"]);
         assert_eq!(o.audit.as_deref(), Some(Path::new("a.jsonl")));
         assert!(o.discard_workspace);
         assert!(parse(args(&["--bogus"])).is_err());
         assert!(parse(args(&["--model"])).is_err());
+        let b = parse(args(&[
+            "c", "-m", "a", "-m", "b", "--runs", "2", "--out", "o",
+        ]))
+        .unwrap();
+        assert_eq!(
+            (b.models.len(), b.runs, b.out.as_deref()),
+            (2, Some(2), Some(Path::new("o")))
+        );
+        assert!(parse(args(&["--runs", "0"])).is_err());
+        assert!(parse(args(&["--runs", "x"])).is_err());
     }
 
     #[tokio::test]
@@ -270,6 +365,10 @@ mod tests {
         assert!(dispatch(args(&[])).await.is_err());
         assert!(dispatch(args(&["run"])).await.is_err(), "missing case dir");
         assert!(dispatch(args(&["frobnicate"])).await.is_err());
+        assert!(
+            dispatch(args(&["bench", "corpus"])).await.is_err(),
+            "no --model"
+        );
     }
 
     #[tokio::test]
