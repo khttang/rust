@@ -73,7 +73,12 @@ run-bounded.sh           Checks the policy, mocks its layout locally, then launc
 validate-openshell.sh    Runs the harness in a live OpenShell sandbox and checks each policy rule
 sandbox.Dockerfile       Sandbox image used by validate-openshell.sh
 providers/openai.yaml    OpenShell provider profile: OpenAI key injection, pinned to the harness
+crates/                  Extension crates (agent-harness-tools-*, agent-harness-task-*); see crates/README.md
+Cargo.toml               Workspace root: shared versions (one rig-core for every crate) + the core crate
+LICENSE-MIT, LICENSE-APACHE
 ```
+
+The repository is a cargo workspace. The core crate sits at the root; extension crates go in `crates/` and take shared dependencies with `workspace = true`, which keeps every crate on the same rig-core version (required for `#[rig_tool]` tools to work with the core).
 
 ```mermaid
 flowchart LR
@@ -633,7 +638,20 @@ Unit tests sit next to each module, plus one integration test in `tests/`; none 
 - **Model support for tools varies.** The loop needs structured tool calls; some local models emit them as plain text.
 - **Memory is not persisted** and is lost on exit. Compaction eviction is permanent within the process.
 - **Text-only answers.** `prompt_agent` returns a `String` and the loop's final answer is text; there is no typed output via `CompletionRequest.output_schema` yet.
-- **Non-streaming.** `ProviderModel` forwards `stream()`, but neither runtime trait has a streaming method.
+- **Non-streaming.** rig models can stream, but `CompletionBackend`, `ProviderModel` and the runtime traits only expose whole replies.
 - **Sequential tools.** Tool calls within a turn run one at a time, trading latency for deterministic side effects.
 - **Sandbox policy is a draft.** See [Security model](#security-model).
 - **Model defaults may go stale.** Override them with an explicit `provider:model` spec.
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <https://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+
+The license covers this `agent-harness/` directory only; other projects in this repository are not covered.
