@@ -11,7 +11,8 @@
 #                  then sandbox.Dockerfile (base pinned by digest)
 #   3. policy      the effective policy matches the file (plus gateway baseline)
 #   4. enforce     identity, filesystem and egress probes inside one sandbox
-#   5. provider    credential injection via providers/openai.yaml
+#   5. provider    credential injection via providers/openai.yaml and
+#                  providers/gemini.yaml
 #   6. task        verified-fix in the sandbox: the policy covers the task's
 #                  sandbox needs, and `verified-fix self-test` runs CBMC (and
 #                  gcc) on every corpus case under Landlock, audited
@@ -26,6 +27,9 @@
 # Optional live call (costs one request on your key): create a provider of
 # type agent-harness-openai yourself (see providers/openai.yaml), then
 #   OPENSHELL_LIVE_OPENAI_PROVIDER=<provider name> ./validate-openshell.sh
+# Optional live Gemini call (one request): create the gemini provider (see
+# providers/gemini.yaml), then OPENSHELL_LIVE_GEMINI_PROVIDER=gemini (model:
+# OPENSHELL_LIVE_GEMINI_MODEL, default gemini-3.5-flash).
 # Optional live task run (several requests): additionally set
 #   OPENSHELL_LIVE_FIX_CASE=<corpus case, e.g. average_div_zero>
 # to run verified-fix end to end on that case, patches auto-approved.
@@ -66,10 +70,13 @@ esac
 
 PROFILE="$ROOT/providers/openai.yaml"
 PROFILE_ID="agent-harness-openai"
+GEMINI_PROFILE="$ROOT/providers/gemini.yaml"
+GEMINI_PROFILE_ID="agent-harness-gemini"
 
 cleanup() {
   openshell sandbox delete "$PREFIX-pol" >/dev/null 2>&1 || true
   openshell provider delete "$PREFIX-oai" >/dev/null 2>&1 || true
+  openshell provider delete "$PREFIX-gem" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -179,36 +186,42 @@ if [[ $FAILS -gt 0 ]]; then
 fi
 
 # 5. Provider credential injection ------------------------------------------
-log "5/6 provider credential injection ($PROFILE_ID)"
-# lint rejects an id the gateway already has, and update needs the gateway's
-# resource_version, so: lint+import a new profile; for an existing one,
-# compare its security-relevant fields with the file and fail on drift.
-if openshell profile describe "$PROFILE_ID" >/dev/null 2>&1; then
-  command -v ruby >/dev/null || die "ruby is needed to compare the imported profile"
-  if drift="$(openshell profile export "$PROFILE_ID" 2>/dev/null | ruby -ryaml -e '
-      pick = ->(p) { {
-        "endpoints" => p["endpoints"],
-        "binaries"  => p["binaries"],
-        "credentials" => p["credentials"].to_a.map { |c| c.slice("env_vars", "auth_style", "header_name") },
-      } }
-      gw = pick.(YAML.safe_load($stdin.read)); file = pick.(YAML.safe_load(File.read(ARGV[0])))
-      gw.each_key { |k| puts "  #{k} differs" unless gw[k] == file[k] }
-      exit(gw == file ? 0 : 1)' "$PROFILE")"; then
-    pass "imported profile matches $PROFILE"
+log "5/6 provider credential injection (agent-harness-openai, agent-harness-gemini)"
+# check_profile <file> <id>: lint rejects an id the gateway already has, and
+# update needs the gateway's resource_version, so lint+import a new profile;
+# for an existing one, compare its security-relevant fields with the file and
+# fail on drift. Then check the profile stays within openshell-policy.yaml.
+check_profile() {
+  local file="$1" id="$2" drift
+  if openshell profile describe "$id" >/dev/null 2>&1; then
+    command -v ruby >/dev/null || die "ruby is needed to compare the imported profile"
+    if drift="$(openshell profile export "$id" 2>/dev/null | ruby -ryaml -e '
+        pick = ->(p) { {
+          "endpoints" => p["endpoints"],
+          "binaries"  => p["binaries"],
+          "credentials" => p["credentials"].to_a.map { |c| c.slice("env_vars", "auth_style", "header_name") },
+        } }
+        gw = pick.(YAML.safe_load($stdin.read)); file = pick.(YAML.safe_load(File.read(ARGV[0])))
+        gw.each_key { |k| puts "  #{k} differs" unless gw[k] == file[k] }
+        exit(gw == file ? 0 : 1)' "$file")"; then
+      pass "$id: imported profile matches $(basename "$file")"
+    else
+      fail "$id: imported profile differs from file:"$'\n'"$drift"$'\n'"  re-import: openshell profile delete $id && openshell profile import -f $file"
+    fi
   else
-    fail "imported profile differs from file:"$'\n'"$drift"$'\n'"  re-import: openshell profile delete $PROFILE_ID && openshell profile import -f $PROFILE"
+    openshell profile lint -f "$file" >/dev/null 2>&1 || die "profile lint failed: $file"
+    openshell profile import -f "$file" >/dev/null 2>&1 && pass "$id: profile linted and imported" \
+      || die "profile import failed: $file"
   fi
-else
-  openshell profile lint -f "$PROFILE" >/dev/null 2>&1 || die "profile lint failed: $PROFILE"
-  openshell profile import -f "$PROFILE" >/dev/null 2>&1 && pass "profile linted and imported" \
-    || die "profile import failed"
-fi
-# A provider widens the effective policy with its own endpoints and binaries.
-# The profile must stay within openshell-policy.yaml: pinned binary, one rule.
-grep -Eq '^binaries: \[/app/agent-harness\]$' "$PROFILE" \
-  && pass "profile pins /app/agent-harness only" || fail "profile binaries are wider than /app/agent-harness"
-grep -Eq '^\s+access:' "$PROFILE" \
-  && fail "profile uses an access preset instead of rules" || pass "profile uses L7 rules, no access preset"
+  # A provider widens the effective policy with its own endpoints and
+  # binaries: pinned binary, L7 rules only.
+  grep -Eq '^binaries: \[/app/agent-harness\]$' "$file" \
+    && pass "$id: pins /app/agent-harness only" || fail "$id: binaries are wider than /app/agent-harness"
+  grep -Eq '^\s+access:' "$file" \
+    && fail "$id: uses an access preset instead of rules" || pass "$id: uses L7 rules, no access preset"
+}
+check_profile "$PROFILE" "$PROFILE_ID"
+check_profile "$GEMINI_PROFILE" "$GEMINI_PROFILE_ID"
 
 openshell provider create --name "$PREFIX-oai" --type "$PROFILE_ID" \
   --credential OPENAI_API_KEY=sk-dummy-validation-0000 >/dev/null 2>&1 || die "provider create failed"
@@ -226,6 +239,33 @@ pget() { sed -n "s|^$1=||p" <<<"$pout" | head -1; }
 expect "sandbox sees only a placeholder"      "$(pget key)"            placeholder
 expect "curl with placeholder (binary not pinned)" "$(pget curl:openai)" 7
 expect "proxy substitutes key for agent-harness" "$(pget harness:openai)" injected
+
+# Gemini: Google's errors do not echo the key, so a dummy can only show the
+# sandbox holds a placeholder (and curl cannot use it); substitution is shown
+# by the optional live call below.
+openshell provider create --name "$PREFIX-gem" --type "$GEMINI_PROFILE_ID" \
+  --credential GEMINI_API_KEY=dummy-validation-value >/dev/null 2>&1 || die "gemini provider create failed"
+gprobe='
+k="${GEMINI_API_KEY:-}"
+case "$k" in openshell:*) echo "key=placeholder" ;; "") echo "key=unset" ;; *) echo "key=raw" ;; esac
+echo "curl:gemini=$(curl -s -o /dev/null --max-time 10 -X POST "https://generativelanguage.googleapis.com/v1beta/models/x:generateContent" -H "x-goog-api-key: $k"; echo $?)"
+'
+gout="$(openshell sandbox create --name "$PREFIX-gem-run" --from "$IMAGE" --policy "$POLICY" \
+  --provider "$PREFIX-gem" --no-auto-providers --no-tty --no-keep -- sh -c "$gprobe" 2>&1)" || true
+gget() { sed -n "s|^$1=||p" <<<"$gout" | head -1; }
+expect "gemini: sandbox sees only a placeholder" "$(gget key)" placeholder
+expect "gemini: curl with placeholder (binary not pinned)" "$(gget curl:gemini)" 7
+
+if [[ -n "${OPENSHELL_LIVE_GEMINI_PROVIDER:-}" ]]; then
+  model="${OPENSHELL_LIVE_GEMINI_MODEL:-gemini-3.5-flash}"
+  log "live Gemini call via provider '$OPENSHELL_LIVE_GEMINI_PROVIDER' ($model, one request)"
+  live="$(openshell sandbox create --name "$PREFIX-glive" --from "$IMAGE" --policy "$POLICY" \
+    --provider "$OPENSHELL_LIVE_GEMINI_PROVIDER" --no-auto-providers --no-tty --no-keep \
+    -- /app/agent-harness --model "gemini:$model" "Reply with exactly: sandbox ok" 2>&1)" || true
+  grep -qi 'sandbox ok' <<<"$live" && r=ok || r=failed
+  expect "live agent-harness -> Gemini ($model)" "$r" ok
+  [[ $r == ok ]] || grep -E 'error|status' <<<"$live" | head -3 >&2
+fi
 
 if [[ -n "${OPENSHELL_LIVE_OPENAI_PROVIDER:-}" ]]; then
   log "live OpenAI call via provider '$OPENSHELL_LIVE_OPENAI_PROVIDER' (one request)"

@@ -7,9 +7,9 @@
 #
 # Assumes the release binaries are installed at /app/agent-harness and
 # /app/verified-fix (the verified-fix task, which runs cbmc and gcc from /usr).
-# Credentials: attach OpenShell `anthropic` / `openai` providers to the sandbox
-# so the agent only sees placeholders; never put real keys in this file.
-# Gemini needs a custom provider for that (see docs/security-architecture.md).
+# Credentials: attach providers so the agent only sees placeholders; never put
+# real keys in this file. This repo's profiles: providers/openai.yaml and
+# providers/gemini.yaml (custom; OpenShell has no Gemini type).
 # Ollama: run with OLLAMA_API_BASE_URL=http://host.openshell.internal:11434
 
 version: 1
@@ -67,8 +67,8 @@ network_policies:
       - path: /app/verified-fix
 
   # Google AI Studio (GEMINI_API_KEY, sent by rig in an x-goog-api-key
-  # header). OpenShell has no built-in provider type for it, so without a
-  # custom provider bound here the real key must be passed into the sandbox.
+  # header). Key injection: attach a provider of the custom type in
+  # providers/gemini.yaml.
   gemini:
     name: gemini-api
     endpoints:
