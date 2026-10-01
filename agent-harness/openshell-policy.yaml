@@ -35,7 +35,7 @@ process:
   run_as_group: sandbox
 
 # Dynamic: hot-reloadable with `openshell policy update` / `set`.
-# Each endpoint allows only the single request rig 0.42 makes.
+# Each endpoint allows only the single request rig 0.43 makes.
 network_policies:
   anthropic:
     name: anthropic-api

@@ -10,9 +10,7 @@ use std::{future::Future, pin::Pin};
 
 use rig_core::{
     completion::ToolDefinition,
-    tool::{
-        IntoToolOutput, PortableTool, ToolExecutionError, ToolOutput, portable_tool_definition,
-    },
+    tool::{IntoToolOutput, PortableTool, ToolExecutionError, ToolOutput, tool_definition},
 };
 use serde_json::Value;
 
@@ -40,7 +38,7 @@ where
     }
 
     fn definition(&self) -> ToolDefinition {
-        portable_tool_definition(self)
+        tool_definition(self)
     }
 
     fn call(&self, args: Value) -> ToolFuture<'_> {

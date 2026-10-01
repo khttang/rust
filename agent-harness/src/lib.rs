@@ -3,7 +3,7 @@
 //! | Concern                  | Item                                   | Default                      |
 //! |--------------------------|----------------------------------------|------------------------------|
 //! | Model access             | [`harness::ModelRuntime`]              | [`harness::HostedProviderRuntime`] |
-//! | LLM provider             | [`rig_core::completion::CompletionModel`] | [`ProviderModel`] (runtime-switchable) |
+//! | LLM provider             | [`CompletionBackend`] | [`ProviderModel`] (runtime-switchable) |
 //! | Learned heuristics       | [`harness::AdaptiveMemoryLayer`]       | —                            |
 //! | Data schemas             | [`models`]                             | —                            |
 //! | Tools                    | [`rig_core::tool::PortableTool`]       | [`tools::Calculator`], …     |
@@ -23,7 +23,7 @@ pub mod validate;
 pub use error::HarnessError;
 pub use harness::{
     AdaptiveMemoryLayer, AgentLoop, AssistantTurn, ChatRuntime, CompactionPolicy, CompactionReport,
-    Conversation, HostedProviderRuntime, ModelRuntime, RunOutcome,
+    CompletionBackend, Conversation, HostedProviderRuntime, ModelRuntime, RunOutcome,
 };
 pub use models::{AgentTask, Manifest, ManifestEntry};
 pub use observer::{NoopObserver, Observer};

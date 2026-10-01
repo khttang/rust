@@ -1,6 +1,6 @@
 # agent-harness
 
-A modular, type-safe, model-agnostic agent harness in Rust, built on [`rig-core`](https://crates.io/crates/rig-core) 0.42.
+A modular, type-safe, model-agnostic agent harness in Rust, built on [`rig-core`](https://crates.io/crates/rig-core) 0.43.
 
 Execution code talks to two small traits, `ModelRuntime` (one prompt, text out) and `ChatRuntime` (a conversation plus tools, one structured turn out), and never to a provider directly. Swapping between Anthropic, OpenAI, Gemini, Ollama and OpenRouter (or a mock in tests) is a change of type parameter or a runtime `/model` command, not a change of calling code. `AgentLoop` drives multi-turn, tool-calling runs with a human-in-the-loop approval gate. Learned environment facts live in a shared, schema-less `AdaptiveMemoryLayer` that can be compacted for small local models. The crate ships a library (`agent_harness`) and an interactive CLI (`agent-harness`).
 
@@ -35,7 +35,7 @@ Execution code talks to two small traits, `ModelRuntime` (one prompt, text out) 
 | Principle | How it shows up |
 |---|---|
 | **Trait-driven separation** | Model access is `ModelRuntime` / `ChatRuntime`; tools, approval and observation are each their own trait. |
-| **Static dispatch by default** | `AgentLoop<R, P, O>` is generic over runtime, policy and observer; `HostedProviderRuntime<M>` over the rig model. Runtime provider switching uses a closed `enum` (`ProviderModel`), not `dyn`. The only type erasure is the tool registry. |
+| **Static dispatch by default** | `AgentLoop<R, P, O>` is generic over runtime, policy and observer; `HostedProviderRuntime<M>` over the rig model (`M: CompletionBackend`). Runtime provider switching uses a closed `enum` (`ProviderModel`), not `dyn`. The only type erasure is the tool registry. |
 | **`Send` futures** | Both runtime traits return `impl Future + Send`, so any runtime can be driven from `tokio::spawn`. Implementors still write plain `async fn`. |
 | **Deterministic execution** | Tool calls run sequentially in the order requested; memory renders sorted by key; compaction never depends on `HashMap` order. |
 | **Human-in-the-loop** | Every tool call passes an `ApprovalPolicy` before it runs. The CLI asks the operator by default. |
@@ -83,7 +83,7 @@ flowchart LR
     AL -->|"O: Observer"| OBS["NoopObserver / StderrObserver"]
     AL --> REG["ToolRegistry → validate_args → DynTool"]
     HPR -.also impl.- MR["ModelRuntime (single-shot)"]
-    HPR -->|"M: CompletionModel"| PM["ProviderModel"]
+    HPR -->|"M: CompletionBackend"| PM["ProviderModel"]
     PM --> A[anthropic]
     PM --> OA[openai]
     PM --> G[gemini]
@@ -110,7 +110,7 @@ pub trait ChatRuntime: Send + Sync {
 - **`ModelRuntime`** is the single-shot contract: system instructions plus one request in, the model's text out.
 - **`ChatRuntime`** is the multi-turn, tool-aware contract. It receives the whole history (rig's provider-neutral `Message`, so a history built on one model replays on another) and the tool definitions to advertise, and returns one **`AssistantTurn`**: `content` (text, tool calls and reasoning, in order), `message_id` and `usage`. Helpers: `text()`, `tool_calls()`, `into_message()` (keeps every part unchanged so provider ids and signatures round-trip), and `text_reply()` for scripted runtimes.
 
-**`HostedProviderRuntime<M: CompletionModel>`** implements both for any rig model:
+**`HostedProviderRuntime<M: CompletionBackend>`** implements both for any rig model. `CompletionBackend` is the harness's one-method bound (`complete(request)`), implemented for every rig `Model<W, T>` whose wire performs a completion and for `ProviderModel`:
 
 | Method | Effect |
 |---|---|
@@ -229,7 +229,7 @@ Memory is **process-local and not persisted**. It is lost when the process exits
 
 - **`Provider`** is an enum of supported backends, with `name()`, `api_key_env()` and `default_model()`.
 - **`ModelSpec`** is `provider[:model]`, parsed with `FromStr`. Only the first `:` separates the two, so `ollama:llama3.2:3b` keeps the model id `llama3.2:3b`. A spec with no model uses the provider's default; providers without a default reject it.
-- **`ProviderModel`** holds a `ModelSpec` and a private `Backend` enum of each rig provider's concrete model type. Its `CompletionModel` impl forwards through a `match`: no boxing, no vtables.
+- **`ProviderModel`** holds a `ModelSpec` and a private `Backend` enum of each rig provider's concrete model type. Its `CompletionBackend` impl forwards through a `match`: no boxing, no vtables. OpenAI is built with `.responses(id)` so it always calls `POST /v1/responses`, the endpoint the sandbox policy allows.
 
 | Provider | Spec name | Default model | Credentials / config (read by rig) |
 |---|---|---|---|
@@ -317,7 +317,7 @@ Current status:
 
 ### Requirements
 
-- Rust toolchain **1.90+** (edition 2024; `rust-version = "1.90"` in `Cargo.toml`)
+- Rust toolchain **1.95+** (edition 2024; `rust-version = "1.95"` in `Cargo.toml`, required by rig 0.43)
 - An API key for at least one hosted provider, or a running [Ollama](https://ollama.com) server
 
 ### Build and test
@@ -433,7 +433,7 @@ Steps:
 ./validate-openshell.sh [--skip-build]
 ```
 
-Needs a running OpenShell gateway with the `docker` compute driver. It builds a Linux binary in `rust:1.90`, builds `sandbox.Dockerfile`, checks that the gateway reports this policy as effective, then runs probes in one sandbox: the non-root user, seccomp, writes outside `/tmp`, reads outside the allowlist, `curl` (an unpinned binary) to listed and unlisted hosts, and the harness reaching Gemini with a dummy key. A last step attaches a temporary dummy-key provider built from `providers/openai.yaml` and checks that the sandbox sees only a placeholder while OpenAI receives the substituted value. Set `OPENSHELL_LIVE_OPENAI_PROVIDER=<provider>` to add one real call. Exits non-zero on any mismatch. On colima the gateway also needs a relay into the VM; the script detects this and prints the command. See the security doc for setup notes.
+Needs a running OpenShell gateway with the `docker` compute driver. It builds a Linux binary in `rust:1.95`, builds `sandbox.Dockerfile`, checks that the gateway reports this policy as effective, then runs probes in one sandbox: the non-root user, seccomp, writes outside `/tmp`, reads outside the allowlist, `curl` (an unpinned binary) to listed and unlisted hosts, and the harness reaching Gemini with a dummy key. A last step attaches a temporary dummy-key provider built from `providers/openai.yaml` and checks that the sandbox sees only a placeholder while OpenAI receives the substituted value. Set `OPENSHELL_LIVE_OPENAI_PROVIDER=<provider>` to add one real call. Exits non-zero on any mismatch. On colima the gateway also needs a relay into the VM; the script detects this and prints the command. See the security doc for setup notes.
 
 ### Using the library
 
@@ -483,7 +483,7 @@ async fn main() -> anyhow::Result<()> {
 
 For a single prompt with no tools or history, `HostedProviderRuntime` also implements `ModelRuntime`: `runtime.prompt_agent(preamble, "question").await?`.
 
-Any rig `CompletionModel` works in place of `ProviderModel`, including a concrete provider model for fully static dispatch, or `rig_core::test_utils::MockCompletionModel` in tests (dev feature `test-utils`).
+Any rig completion model (`Model<W, T>`) works in place of `ProviderModel`, including a concrete provider model such as `OpenAI::from_env()?.responses("gpt-5.6")` for fully static dispatch, or `rig_core::test_utils::MockCompletionModel` in tests (dev feature `test-utils`).
 
 ### Writing a runtime
 
@@ -545,7 +545,7 @@ fn multiply(a: i64, b: i64) -> Result<i64, ToolExecutionError> {
 registry.register(Multiply)?;   // struct named after the function, in PascalCase
 ```
 
-- **Add `rig-core` as a direct dependency**, at the same version as the harness (`rig-core = "0.42"`). The macro finds the rig crate through the calling crate's own `Cargo.toml`, so the `agent_harness::rig_core` re-export alone fails with ``cannot find `rig_core` in the crate root``.
+- **Add `rig-core` as a direct dependency**, at the same version as the harness (`rig-core = "0.43"`). The macro finds the rig crate through the calling crate's own `Cargo.toml`, so the `agent_harness::rig_core` re-export alone fails with ``cannot find `rig_core` in the crate root``.
 - `async fn` works too. `name = "..."` overrides the tool name.
 - Non-`Option` parameters are required and `Option<T>` parameters are optional; `required(...)` overrides this.
 - A `String` return value reaches the model as text; any other `Serialize` type reaches it as JSON.
@@ -606,7 +606,7 @@ Keep `parameters()` in sync with `Args`, keep tools `Send + Sync + 'static`, and
 In `src/provider.rs`:
 
 1. Add a variant to `Provider` and to `Provider::ALL`, and fill in `name`, `api_key_env` and `default_model`.
-2. Add a `type XModel = <x::Client as CompletionClient>::CompletionModel;` alias and a `Backend::X(XModel)` variant.
+2. Add a `Backend::X(Model<x::Wire>)` variant holding rig's concrete completion model for that provider (the type `X::from_env()?.completion(id)` returns).
 3. Add the arm to `ProviderModel::from_env` and to the `dispatch!` macro.
 4. Add the name to the `UnknownProvider` error message and add parsing tests.
 

@@ -5,7 +5,7 @@
 # endpoints and binaries to the sandbox's effective policy as a
 # `_provider_<name>` entry, so this profile must not grant more than the policy:
 #   - binaries: only /app/agent-harness (upstream allows curl)
-#   - endpoint: only POST /v1/responses, the one call rig 0.42 makes
+#   - endpoint: only POST /v1/responses, the one call rig 0.43 makes
 #     (upstream: access: read-write)
 #
 # Credential scope: OPENAI_API_KEY, sent as a bearer authorization header to

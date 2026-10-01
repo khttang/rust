@@ -8,4 +8,6 @@ pub mod runtime;
 pub use agent::{AgentLoop, DEFAULT_MAX_TURNS, RunOutcome};
 pub use conversation::Conversation;
 pub use memory::{AdaptiveMemoryLayer, CompactionPolicy, CompactionReport};
-pub use runtime::{AssistantTurn, ChatRuntime, HostedProviderRuntime, ModelRuntime};
+pub use runtime::{
+    AssistantTurn, ChatRuntime, CompletionBackend, HostedProviderRuntime, ModelRuntime,
+};

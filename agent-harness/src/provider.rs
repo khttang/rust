@@ -2,7 +2,7 @@
 //!
 //! A [`ModelSpec`] (`provider[:model]`, e.g. `anthropic:claude-sonnet-5` or
 //! `ollama:llama3.2:3b`) names a provider and model. [`ProviderModel::from_env`]
-//! turns a spec into a [`CompletionModel`], reading credentials from the
+//! turns a spec into a [`CompletionBackend`], reading credentials from the
 //! provider's standard environment variables via rig.
 //!
 //! [`ProviderModel`] dispatches over a closed enum of rig provider models, so
@@ -11,14 +11,19 @@
 use std::{fmt, str::FromStr};
 
 use rig_core::{
-    client::{CompletionClient, ProviderClient},
-    completion::{
-        CompletionError, CompletionModel, CompletionRequest, CompletionResponse,
-        ProviderCapabilities,
+    Model, ProviderError as RigProviderError,
+    client::EnvError,
+    completion::{CompletionRequest, CompletionResponse},
+    providers::{
+        anthropic::{self, Anthropic},
+        gemini::{self, Gemini},
+        ollama::{self, Ollama},
+        openai::{self, OpenAI, responses_api},
+        openrouter,
     },
-    providers::{anthropic, gemini, ollama, openai, openrouter},
-    streaming::StreamingCompletionResponse,
 };
+
+use crate::harness::CompletionBackend;
 
 /// A supported LLM provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -154,19 +159,16 @@ pub enum ProviderError {
     },
 }
 
-type AnthropicModel = <anthropic::Client as CompletionClient>::CompletionModel;
-type OpenAIModel = <openai::Client as CompletionClient>::CompletionModel;
-type GeminiModel = <gemini::Client as CompletionClient>::CompletionModel;
-type OllamaModel = <ollama::Client as CompletionClient>::CompletionModel;
-type OpenRouterModel = <openrouter::Client as CompletionClient>::CompletionModel;
-
+/// One rig completion model per provider. OpenAI uses the Responses API
+/// (`POST /v1/responses`, the endpoint `openshell-policy.yaml` allows);
+/// OpenRouter uses its OpenAI-compatible Chat Completions endpoint.
 #[derive(Clone)]
 enum Backend {
-    Anthropic(AnthropicModel),
-    OpenAI(OpenAIModel),
-    Gemini(GeminiModel),
-    Ollama(OllamaModel),
-    OpenRouter(OpenRouterModel),
+    Anthropic(Model<anthropic::wire::Messages>),
+    OpenAI(Model<responses_api::wire::Responses>),
+    Gemini(Model<gemini::completion::GenerateContent>),
+    Ollama(Model<ollama::Chat>),
+    OpenRouter(Model<openai::wire::Chat>),
 }
 
 /// A completion model whose provider is chosen at runtime.
@@ -180,32 +182,22 @@ impl ProviderModel {
     /// Build the model named by `spec`, reading credentials and base URLs
     /// from the provider's standard environment variables.
     pub fn from_env(spec: ModelSpec) -> Result<Self, ProviderError> {
-        fn client<C: ProviderClient>(provider: Provider) -> Result<C, ProviderError>
-        where
-            C::Error: std::error::Error + Send + Sync + 'static,
-        {
-            C::from_env().map_err(|e| ProviderError::Client {
-                provider,
-                source: Box::new(e),
-            })
-        }
+        let provider = spec.provider;
+        let env = |e: EnvError| ProviderError::Client {
+            provider,
+            source: Box::new(e),
+        };
 
         let id = spec.model.as_str();
-        let backend = match spec.provider {
-            p @ Provider::Anthropic => {
-                Backend::Anthropic(client::<anthropic::Client>(p)?.completion_model(id))
+        let backend = match provider {
+            Provider::Anthropic => {
+                Backend::Anthropic(Anthropic::from_env().map_err(env)?.completion(id))
             }
-            p @ Provider::OpenAI => {
-                Backend::OpenAI(client::<openai::Client>(p)?.completion_model(id))
-            }
-            p @ Provider::Gemini => {
-                Backend::Gemini(client::<gemini::Client>(p)?.completion_model(id))
-            }
-            p @ Provider::Ollama => {
-                Backend::Ollama(client::<ollama::Client>(p)?.completion_model(id))
-            }
-            p @ Provider::OpenRouter => {
-                Backend::OpenRouter(client::<openrouter::Client>(p)?.completion_model(id))
+            Provider::OpenAI => Backend::OpenAI(OpenAI::from_env().map_err(env)?.responses(id)),
+            Provider::Gemini => Backend::Gemini(Gemini::from_env().map_err(env)?.completion(id)),
+            Provider::Ollama => Backend::Ollama(Ollama::from_env().map_err(env)?.completion(id)),
+            Provider::OpenRouter => {
+                Backend::OpenRouter(openrouter::from_env().map_err(env)?.chat(id))
             }
         };
         Ok(Self { spec, backend })
@@ -237,23 +229,12 @@ macro_rules! dispatch {
     };
 }
 
-impl CompletionModel for ProviderModel {
-    async fn completion(
+impl CompletionBackend for ProviderModel {
+    async fn complete(
         &self,
         request: CompletionRequest,
-    ) -> Result<CompletionResponse, CompletionError> {
-        dispatch!(&self.backend, m => m.completion(request).await)
-    }
-
-    async fn stream(
-        &self,
-        request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse, CompletionError> {
-        dispatch!(&self.backend, m => m.stream(request).await)
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        dispatch!(&self.backend, m => m.capabilities())
+    ) -> Result<CompletionResponse, RigProviderError> {
+        dispatch!(&self.backend, m => m.complete(request).await)
     }
 }
 
@@ -328,7 +309,7 @@ mod tests {
 
     #[test]
     fn provider_model_is_send_sync_static() {
-        fn assert_bounds<T: CompletionModel + Clone + Send + Sync + 'static>() {}
+        fn assert_bounds<T: CompletionBackend + Clone + Send + Sync + 'static>() {}
         assert_bounds::<ProviderModel>();
     }
 }

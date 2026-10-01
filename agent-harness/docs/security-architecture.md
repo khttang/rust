@@ -58,12 +58,12 @@ docs (see [Sources](#sources)); re-check if you run a different version.
 | Credentials | Attached providers expose placeholders; the proxy resolves them in header values, Basic/Bearer auth, query parameters and URL paths, and in bodies only with `request_body_credential_rewrite: true`. |
 | `network_middlewares` | Up to 10 ordered stages per policy: `middleware` (e.g. `openshell/regex`), `order` (unique), `config`, `on_error` (`fail_closed` default / `fail_open`), `endpoints.include` / `exclude`. Runs after policy admits a request, before credential injection. |
 
-Requests the harness actually makes (from rig 0.42's source):
+Requests the harness actually makes (from rig 0.43's source; Gemini's automatic `cachedContents` caching is opt-in and not used):
 
 | Provider | Endpoint |
 |---|---|
 | Anthropic | `POST https://api.anthropic.com/v1/messages`, key in `x-api-key` |
-| OpenAI | `POST https://api.openai.com/v1/responses` (rig's default Responses API), key in `Authorization: Bearer` |
+| OpenAI | `POST https://api.openai.com/v1/responses` (the harness builds the model with `.responses(id)`), key in `Authorization: Bearer` |
 | Gemini | `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`, key in `x-goog-api-key` |
 | Ollama | `POST {OLLAMA_API_BASE_URL}/api/chat`, plain HTTP |
 
