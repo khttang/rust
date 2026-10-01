@@ -12,6 +12,9 @@
 #   3. policy      the effective policy matches the file (plus gateway baseline)
 #   4. enforce     identity, filesystem and egress probes inside one sandbox
 #   5. provider    credential injection via providers/openai.yaml
+#   6. task        verified-fix in the sandbox: the policy covers the task's
+#                  sandbox needs, and `verified-fix self-test` runs CBMC (and
+#                  gcc) on every corpus case under Landlock, audited
 #
 # The egress probe sends a dummy Gemini key: Google's "API key not valid" reply
 # proves the request crossed the proxy without spending quota. The provider
@@ -23,6 +26,9 @@
 # Optional live call (costs one request on your key): create a provider of
 # type agent-harness-openai yourself (see providers/openai.yaml), then
 #   OPENSHELL_LIVE_OPENAI_PROVIDER=<provider name> ./validate-openshell.sh
+# Optional live task run (several requests): additionally set
+#   OPENSHELL_LIVE_FIX_CASE=<corpus case, e.g. average_div_zero>
+# to run verified-fix end to end on that case, patches auto-approved.
 #
 # Usage: ./validate-openshell.sh [--skip-build]
 #
@@ -68,7 +74,7 @@ cleanup() {
 trap cleanup EXIT
 
 # 1. Preflight ---------------------------------------------------------------
-log "1/5 preflight"
+log "1/6 preflight"
 command -v openshell >/dev/null || die "openshell CLI not found"
 command -v docker >/dev/null || die "docker CLI not found"
 openshell status 2>&1 | grep -q 'Status: Connected' || die "gateway not connected (openshell status)"
@@ -91,27 +97,30 @@ case "$(docker version --format '{{.Server.Arch}}')" in
   amd64|x86_64)  TRIPLE_DIR="linux-x86_64" ;;
   *) die "unsupported docker architecture" ;;
 esac
-BIN="$ROOT/target/$TRIPLE_DIR/release/agent-harness"
+RELEASE="$ROOT/target/$TRIPLE_DIR/release"
+CORPUS="$ROOT/crates/agent-harness-task-verified-fix/corpus"
 if [[ $SKIP_BUILD -eq 0 ]]; then
   # The commit the binary is built from, recorded in every run_started
   # audit record; "-dirty" when agent-harness/ has uncommitted changes.
   COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
   [[ -z "$(git -C "$ROOT" status --porcelain -- . 2>/dev/null)" ]] || COMMIT="$COMMIT-dirty"
-  log "2/5 build (${RUST_IMAGE%@*} @ commit $COMMIT -> target/$TRIPLE_DIR, then $IMAGE)"
+  log "2/6 build (${RUST_IMAGE%@*} @ commit $COMMIT -> target/$TRIPLE_DIR, then $IMAGE)"
   docker run --rm -v "$ROOT":/src -w /src -e CARGO_TARGET_DIR="/src/target/$TRIPLE_DIR" \
     -e AGENT_HARNESS_GIT_COMMIT="$COMMIT" "$RUST_IMAGE" \
-    sh -c 'apt-get -qq update >/dev/null && apt-get -qq install -y cmake >/dev/null 2>&1; cargo build --release --locked --quiet'
-  mkdir -p "$ROOT/.sandbox/image"
-  cp "$BIN" "$ROOT/.sandbox/image/agent-harness"
-  docker build -q -f "$ROOT/sandbox.Dockerfile" -t "$IMAGE" "$ROOT/.sandbox/image" >/dev/null 2>&1 \
-    || die "docker build failed"
+    sh -c 'apt-get -qq update >/dev/null && apt-get -qq install -y cmake >/dev/null 2>&1
+           cargo build --release --locked --quiet -p agent-harness -p agent-harness-task-verified-fix'
+  rm -rf "$ROOT/.sandbox/image" && mkdir -p "$ROOT/.sandbox/image"
+  cp "$RELEASE/agent-harness" "$RELEASE/verified-fix" "$ROOT/.sandbox/image/"
+  cp -R "$CORPUS" "$ROOT/.sandbox/image/corpus"
+  docker build -q --build-arg CBMC_PACKAGE="$CBMC_PACKAGE" -f "$ROOT/sandbox.Dockerfile" \
+    -t "$IMAGE" "$ROOT/.sandbox/image" >/dev/null 2>&1 || die "docker build failed"
 else
-  log "2/5 build skipped"
+  log "2/6 build skipped"
 fi
 docker image inspect "$IMAGE" >/dev/null 2>&1 || die "image $IMAGE missing; run without --skip-build"
 
 # 3. Effective policy --------------------------------------------------------
-log "3/5 effective policy"
+log "3/6 effective policy"
 created="$(openshell sandbox create --name "$PREFIX-pol" --from "$IMAGE" --policy "$POLICY" \
   --no-auto-providers --no-tty --detach -- sleep 120 2>&1)" \
   || die "sandbox create failed:"$'\n'"$(tail -15 <<<"$created")"
@@ -124,7 +133,7 @@ done
 cleanup
 
 # 4. Enforcement probes ------------------------------------------------------
-log "4/5 enforcement probes"
+log "4/6 enforcement probes"
 # Each probe prints "key=value"; values are compared on the host.
 probes='
 c() { curl -s -o /dev/null --max-time 10 "$@"; echo $?; }
@@ -170,7 +179,7 @@ if [[ $FAILS -gt 0 ]]; then
 fi
 
 # 5. Provider credential injection ------------------------------------------
-log "5/5 provider credential injection ($PROFILE_ID)"
+log "5/6 provider credential injection ($PROFILE_ID)"
 # lint rejects an id the gateway already has, and update needs the gateway's
 # resource_version, so: lint+import a new profile; for an existing one,
 # compare its security-relevant fields with the file and fail on drift.
@@ -230,6 +239,58 @@ fi
 if [[ $FAILS -gt 0 ]]; then
   echo "validate: $FAILS check(s) failed. Raw provider sandbox output:" >&2
   echo "$pout" >&2
+  exit 1
+fi
+
+# 6. The verified-fix task in the sandbox ------------------------------------
+log "6/6 verified-fix in the sandbox"
+# The task declares the programs it runs; each must be readable (and so
+# executable) under the policy's read_only paths. Debian trixie has a merged
+# /usr: /bin and /lib are symlinks into /usr.
+needs="$(docker run --rm "$IMAGE" /app/verified-fix sandbox-needs)"
+command -v ruby >/dev/null || die "ruby is needed to check sandbox needs against the policy"
+if gaps="$(ruby -ryaml -rjson -e '
+    policy = YAML.safe_load(File.read(ARGV[0]))
+    allowed = policy.dig("filesystem_policy", "read_only").to_a + policy.dig("filesystem_policy", "read_write").to_a
+    needs = JSON.parse(ARGV[1])
+    merged = ->(p) { p.sub(%r{\A/(bin|sbin|lib)(/|\z)}, "/usr/\\1\\2") }
+    covered = ->(p) { allowed.any? { |a| m = merged.(a); m == merged.(p) || merged.(p).start_with?(m.chomp("/") + "/") } }
+    gaps = needs["binaries"].reject(&covered)
+    gaps += needs["egress"].map { |e| "egress #{e["host"]}:#{e["port"]} (not generated yet)" }
+    puts gaps
+    exit(gaps.empty? ? 0 : 1)' "$POLICY" "$needs")"; then
+  pass "policy covers the task's sandbox needs ($(ruby -rjson -e 'puts JSON.parse(ARGV[0])["binaries"].join(", ")' "$needs"))"
+else
+  fail "policy does not cover: $gaps"
+fi
+
+# CBMC and gcc under Landlock, seccomp and the non-root user: every corpus
+# original must fail and every reference fix verify, on a verified chain.
+st="$(openshell sandbox create --name "$PREFIX-st" --from "$IMAGE" --policy "$POLICY" \
+  --no-auto-providers --no-tty --no-keep \
+  -- /app/verified-fix self-test /app/corpus --audit /tmp/self-test.jsonl 2>&1)" || true
+grep -q '"self_test": "passed"' <<<"$st" && r=passed || r=failed
+expect "self-test: CBMC on every corpus case in the sandbox" "$r" passed
+cbmc_version="$(sed -n 's/.*"cbmc": "\([^"]*\)".*/\1/p' <<<"$st" | head -1)"
+expect "CBMC identified inside the sandbox" "${cbmc_version%% *}" "6.6.0"
+records="$(sed -n 's/.*"audit_records": \([0-9]*\).*/\1/p' <<<"$st" | head -1)"
+[[ "${records:-0}" -gt 10 ]] && pass "self-test audit chain verified ($records records)" \
+  || fail "self-test audit chain: '${records:-none}' records"
+
+if [[ -n "${OPENSHELL_LIVE_OPENAI_PROVIDER:-}" && -n "${OPENSHELL_LIVE_FIX_CASE:-}" ]]; then
+  log "live verified-fix on '$OPENSHELL_LIVE_FIX_CASE' via provider '$OPENSHELL_LIVE_OPENAI_PROVIDER' (several requests)"
+  fix="$(openshell sandbox create --name "$PREFIX-fix" --from "$IMAGE" --policy "$POLICY" \
+    --provider "$OPENSHELL_LIVE_OPENAI_PROVIDER" --no-auto-providers --no-tty --no-keep \
+    --env HARNESS_MODEL=openai --env HARNESS_AUTO_APPROVE=1 \
+    -- /app/verified-fix run "/app/corpus/$OPENSHELL_LIVE_FIX_CASE" --audit /tmp/fix.jsonl 2>&1)" || true
+  grep -q '"accepted": true' <<<"$fix" && r=accepted || r=rejected
+  expect "live verified-fix accepted" "$r" accepted
+  [[ $r == accepted ]] || echo "$fix" | tail -40 >&2
+fi
+
+if [[ $FAILS -gt 0 ]]; then
+  echo "validate: $FAILS check(s) failed. Raw self-test output:" >&2
+  echo "$st" | tail -30 >&2
   exit 1
 fi
 log "all checks passed"

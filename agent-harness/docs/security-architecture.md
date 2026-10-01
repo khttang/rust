@@ -175,10 +175,28 @@ all of it; every check passed.
 | Allowed path | `agent-harness` → Gemini `generateContent` with a dummy key gets Google's `API_KEY_INVALID` reply, so the request crossed the proxy. No real credential used. |
 | Credential injection | With an `agent-harness-openai` provider attached, the sandbox's `OPENAI_API_KEY` is an `openshell:…` placeholder. A dummy-key provider makes OpenAI reply `Incorrect API key provided: sk-dummy…`, so the proxy substituted the value. `curl` holding the placeholder is refused. |
 | Live OpenAI | `agent-harness` → `gpt-5.6` via `POST /v1/responses` with a real key held only by the gateway: answered normally (opt-in check, one request). |
+| Task in the sandbox (2026-10-01) | `verified-fix self-test` runs CBMC 6.6.0 and `gcc` on every corpus case under Landlock, seccomp and the `sandbox` user: originals fail, reference fixes verify, the audit chain verifies. The policy covers the task's declared `sandbox-needs` (`/usr/bin/cbmc`, `/bin/sh`, `/usr/bin/gcc`; checked by the script). |
+| Live task (2026-10-01) | `verified-fix run` with `gpt-5.6`, patches auto-approved: `average_div_zero` accepted in 4 turns (5,277 tokens), `pitch_overflow` accepted in 4 turns (6,513 tokens) after one audited retry. All six acceptance checks passed. |
 
 Not yet exercised: the L7 `rules` themselves (a disallowed method or path
 from the pinned binary), the Anthropic and Ollama paths, and hot reload with
 `openshell policy set`.
+
+#### OpenShell 0.1.2 behaviours found by the live task runs
+
+- **Connections are reset about 10 s into a sandbox's life.** The
+  supervisor's settings poll reports `provider_env_changed:true` (with no
+  policy change) and closes every proxied connection opened under the old
+  policy generation (`DENIED ... L7 tunnel closed before inspection because
+  policy changed: policy generation is stale`). The next request on a
+  reused connection fails before it is sent. `AgentLoop` therefore retries
+  model requests that rig classifies as transient (at most 2 retries, 250 ms
+  then 1 s), and records each failed attempt as a `model_retry` audit event.
+- **A profile's `binaries` do not limit who gets the credential.** The OpenAI
+  key was substituted for `/app/verified-fix`, which the `agent-harness-openai`
+  profile does not list, because the sandbox policy lets that binary reach
+  `api.openai.com`. Profiles add egress; the sandbox policy's `binaries` are
+  the real gate on who can use an injected key, so keep them minimal.
 
 #### Provider profiles widen the policy
 

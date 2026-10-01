@@ -48,6 +48,32 @@ let report = runner.run(&VerifiedFix::default(), case.input.clone(), &case.sourc
 println!("accepted: {}\n{}", report.accepted(), report.acceptance.report.diff);
 ```
 
+## Command line
+
+```sh
+verified-fix run corpus/pitch_overflow --model openai      # a person approves each patch
+HARNESS_AUTO_APPROVE=1 verified-fix run corpus/pitch_overflow   # approve without asking (recorded as policy)
+verified-fix self-test corpus      # no model: CBMC on every case (originals fail, references verify)
+verified-fix sandbox-needs         # programs and egress the task needs, as JSON
+verified-fix --version             # build identity
+```
+
+`run` prints the report as JSON (checks, diff, CBMC verdict and evidence,
+audit file and its last hash) and exits 0 if accepted, 1 if not, 2 on
+errors. Every run writes a hash-chained audit log (`--audit <file>`, default
+`verified-fix-<case>-<ms>.jsonl`), verified before the report is printed.
+Environment: `HARNESS_MODEL` (default `openai`), the provider's key (a
+placeholder under OpenShell), `CBMC_PATH`.
+
+## In the OpenShell sandbox
+
+The sandbox image ships `/app/verified-fix`, the corpus at `/app/corpus`,
+and CBMC with `gcc` (pinned in `images.env`). `validate-openshell.sh` step 6
+checks the policy covers `sandbox-needs` and runs `self-test` inside the
+sandbox. Verified live on 2026-10-01 with `gpt-5.6`: `average_div_zero` and
+`pitch_overflow` were fixed and accepted, the second after one audited retry
+(OpenShell resets connections about 10 s in; see the security doc).
+
 ## Corpus
 
 `corpus/<case>/` holds `case.json` (the `FixInput`: file, function, unwind,
@@ -80,5 +106,5 @@ it). Every original fails CBMC and every reference verifies (tested).
 
 Run with real CBMC: `../../test-in-container.sh -p agent-harness-task-verified-fix`.
 
-Next (M4/M5): CBMC inside the OpenShell sandbox, and live runs over the
-corpus with real models.
+Next (M5): live runs over the whole corpus with several models, reported as a
+benchmark.

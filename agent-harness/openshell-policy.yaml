@@ -5,7 +5,8 @@
 # re-runs those checks.
 # Rationale and review notes: docs/security-architecture.md.
 #
-# Assumes the release binary is installed at /app/agent-harness.
+# Assumes the release binaries are installed at /app/agent-harness and
+# /app/verified-fix (the verified-fix task, which runs cbmc and gcc from /usr).
 # Credentials: attach OpenShell `anthropic` / `openai` providers to the sandbox
 # so the agent only sees placeholders; never put real keys in this file.
 # Gemini needs a custom provider for that (see docs/security-architecture.md).
@@ -17,7 +18,9 @@ version: 1
 filesystem_policy:
   include_workdir: false
   read_only:
-    - /app/agent-harness   # the executable, not src/
+    - /app/agent-harness   # the executables, not src/
+    - /app/verified-fix
+    - /app/corpus          # the verified-fix corpus
     - /usr
     - /lib
     - /etc                 # CA bundle for TLS, resolv.conf
@@ -48,6 +51,7 @@ network_policies:
           - allow: { method: POST, path: /v1/messages }
     binaries:
       - path: /app/agent-harness
+      - path: /app/verified-fix
 
   openai:
     name: openai-api
@@ -60,6 +64,7 @@ network_policies:
           - allow: { method: POST, path: /v1/responses }
     binaries:
       - path: /app/agent-harness
+      - path: /app/verified-fix
 
   # Google AI Studio (GEMINI_API_KEY, sent by rig in an x-goog-api-key
   # header). OpenShell has no built-in provider type for it, so without a
@@ -75,6 +80,7 @@ network_policies:
           - allow: { method: POST, path: "/v1beta/models/*:generateContent" }
     binaries:
       - path: /app/agent-harness
+      - path: /app/verified-fix
 
   ollama:
     name: ollama-host
@@ -87,3 +93,4 @@ network_policies:
           - allow: { method: POST, path: /api/chat }
     binaries:
       - path: /app/agent-harness
+      - path: /app/verified-fix

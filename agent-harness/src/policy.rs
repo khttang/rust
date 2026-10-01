@@ -198,6 +198,70 @@ impl<P: ApprovalPolicy> ApprovalPolicy for RiskGate<P> {
     }
 }
 
+/// Asks the operator on the terminal before each call it reviews, and
+/// records the answer as a human decision. With `auto_approve` it approves
+/// without asking and records the decision as the policy
+/// `env:HARNESS_AUTO_APPROVE`, never as a human one.
+///
+/// Wrap it in [`RiskGate`] so only mutating tools reach the operator.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ConsoleApproval {
+    auto_approve: bool,
+}
+
+impl ConsoleApproval {
+    /// Ask on every call.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Approve without asking when `HARNESS_AUTO_APPROVE=1`.
+    pub fn from_env() -> Self {
+        Self {
+            auto_approve: std::env::var("HARNESS_AUTO_APPROVE").is_ok_and(|v| v == "1"),
+        }
+    }
+
+    pub fn auto_approves(&self) -> bool {
+        self.auto_approve
+    }
+}
+
+/// The operator's OS login, the best identity a terminal approver has.
+pub fn operator() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_else(|_| "unknown-operator".to_owned())
+}
+
+/// Prints `prompt` to stderr and reads one line from stdin. `None` on EOF.
+fn ask(prompt: &str) -> std::io::Result<Option<String>> {
+    use std::io::{BufRead, Write};
+    let mut stderr = std::io::stderr().lock();
+    stderr.write_all(prompt.as_bytes())?;
+    stderr.flush()?;
+    let mut line = String::new();
+    Ok((std::io::stdin().lock().read_line(&mut line)? > 0).then_some(line))
+}
+
+impl ApprovalPolicy for ConsoleApproval {
+    async fn review(&self, call: &ToolCall, _ctx: &ReviewContext) -> Approval {
+        if self.auto_approve {
+            return Approval::approve(Decider::policy("env:HARNESS_AUTO_APPROVE"));
+        }
+        let prompt = format!(
+            "\n[approve] {}({}) ? [y/N] ",
+            call.function.name, call.function.arguments
+        );
+        match tokio::task::spawn_blocking(move || ask(&prompt)).await {
+            Ok(Ok(Some(answer))) if answer.trim().eq_ignore_ascii_case("y") => {
+                Approval::approve(Decider::human(operator()))
+            }
+            _ => Approval::deny(Decider::human(operator()), "operator rejected the call"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +329,14 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn console_auto_approval_is_a_policy_decision() {
+        let policy = ConsoleApproval { auto_approve: true };
+        let a = policy.review(&call("x"), &ctx(ToolRisk::Mutating)).await;
+        assert!(a.is_approved());
+        assert_eq!(a.decider(), &Decider::policy("env:HARNESS_AUTO_APPROVE"));
+    }
+
     #[test]
     fn policies_are_send_sync_static() {
         fn assert_bounds<T: ApprovalPolicy + 'static>() {}
@@ -272,5 +344,6 @@ mod tests {
         assert_bounds::<DenyAll>();
         assert_bounds::<AllowList>();
         assert_bounds::<RiskGate<DenyAll>>();
+        assert_bounds::<RiskGate<ConsoleApproval>>();
     }
 }

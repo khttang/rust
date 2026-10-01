@@ -114,6 +114,13 @@ pub enum AuditEvent {
         response_id: Option<String>,
         request_id: Option<String>,
     },
+    /// A model request that failed transiently and is being retried.
+    ModelRetry {
+        turn: usize,
+        /// Failed attempts so far for this turn (1 for the first retry).
+        attempt: usize,
+        error: String,
+    },
     /// A tool call the model requested, its declared risk and the decision.
     ToolCall {
         turn: usize,

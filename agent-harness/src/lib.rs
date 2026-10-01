@@ -34,10 +34,10 @@ pub use harness::{
     RunOutcome, RuntimeInfo,
 };
 pub use models::{AgentTask, Manifest, ManifestEntry};
-pub use observer::{NoopObserver, Observer};
+pub use observer::{NoopObserver, Observer, StderrObserver};
 pub use policy::{
-    AllowList, Approval, ApprovalPolicy, AutoApprove, Decider, DenyAll, ReviewContext, RiskGate,
-    ToolRisk,
+    AllowList, Approval, ApprovalPolicy, AutoApprove, ConsoleApproval, Decider, DenyAll,
+    ReviewContext, RiskGate, ToolRisk,
 };
 pub use process::{ProcessError, ProcessOutput, ProcessSpec};
 pub use provider::{ModelSpec, Provider, ProviderError, ProviderModel};

@@ -24,13 +24,9 @@
 use std::io::{self, BufRead, Write};
 
 use agent_harness::{
-    AdaptiveMemoryLayer, AgentLoop, AgentTask, Approval, ApprovalPolicy, AssistantTurn, BuildInfo,
-    CompactionPolicy, CompactionReport, Conversation, Decider, HostedProviderRuntime, ModelSpec,
-    Observer, Provider, ProviderModel, ReviewContext, ToolRegistry,
-    rig_core::{
-        message::ToolCall,
-        tool::{ToolExecutionError, ToolOutput},
-    },
+    AdaptiveMemoryLayer, AgentLoop, AgentTask, BuildInfo, CompactionPolicy, CompactionReport,
+    ConsoleApproval, Conversation, HostedProviderRuntime, ModelSpec, Provider, ProviderModel,
+    StderrObserver, ToolRegistry,
     tools::{Calculator, WordCount},
 };
 
@@ -40,73 +36,6 @@ type CliAgent = AgentLoop<Runtime, ConsoleApproval, StderrObserver>;
 const DEFAULT_SPEC: &str = "anthropic";
 const PREAMBLE: &str = "You are a helpful assistant. Use the provided tools when they help \
                         you answer accurately. Be concise.";
-
-/// Asks the operator on the terminal before each tool call.
-struct ConsoleApproval {
-    auto_approve: bool,
-}
-
-/// The operator's OS login, the best identity available to a terminal
-/// approver. Recorded as a human decision.
-fn operator() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("LOGNAME"))
-        .unwrap_or_else(|_| "unknown-operator".to_owned())
-}
-
-impl ApprovalPolicy for ConsoleApproval {
-    async fn review(&self, call: &ToolCall, _ctx: &ReviewContext) -> Approval {
-        if self.auto_approve {
-            return Approval::approve(Decider::policy("env:HARNESS_AUTO_APPROVE"));
-        }
-        let prompt = format!(
-            "\n[approve] {}({}) ? [y/N] ",
-            call.function.name, call.function.arguments
-        );
-        match tokio::task::spawn_blocking(move || read_line(&prompt)).await {
-            Ok(Ok(Some(answer))) if answer.trim().eq_ignore_ascii_case("y") => {
-                Approval::approve(Decider::human(operator()))
-            }
-            _ => Approval::deny(Decider::human(operator()), "operator rejected the call"),
-        }
-    }
-}
-
-/// Logs lifecycle events to stderr.
-struct StderrObserver;
-
-impl Observer for StderrObserver {
-    fn on_turn_start(&self, turn: usize) {
-        eprintln!("[turn {turn}]");
-    }
-
-    fn on_model_response(&self, _turn: usize, response: &AssistantTurn) {
-        let calls = response.tool_calls().count();
-        if calls > 0 {
-            eprintln!("  model requested {calls} tool call(s)");
-        }
-    }
-
-    fn on_tool_call(&self, call: &ToolCall, _ctx: &ReviewContext, approval: &Approval) {
-        let decision = if approval.is_approved() {
-            "approved"
-        } else {
-            "denied"
-        };
-        eprintln!(
-            "  -> {} {decision} by {:?}",
-            call.function.name,
-            approval.decider()
-        );
-    }
-
-    fn on_tool_result(&self, call: &ToolCall, result: &Result<ToolOutput, ToolExecutionError>) {
-        match result {
-            Ok(out) => eprintln!("  <- {}: {}", call.function.name, out.render()),
-            Err(e) => eprintln!("  <- {} failed: {e}", call.function.name),
-        }
-    }
-}
 
 /// Prints `prompt` to stderr and reads one line from stdin. `None` on EOF.
 fn read_line(prompt: &str) -> io::Result<Option<String>> {
@@ -234,13 +163,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let spec = cli_spec
         .or_else(|| std::env::var("HARNESS_MODEL").ok())
         .unwrap_or_else(|| DEFAULT_SPEC.to_owned());
-    let auto_approve = std::env::var("HARNESS_AUTO_APPROVE").is_ok_and(|v| v == "1");
 
     let mut tools = ToolRegistry::new();
     tools.register_read_only(Calculator)?;
     tools.register_read_only(WordCount)?;
     let mut agent = AgentLoop::new(HostedProviderRuntime::new(load_model(&spec)?), tools)
-        .with_policy(ConsoleApproval { auto_approve })
+        .with_policy(ConsoleApproval::from_env())
         .with_observer(StderrObserver);
     let memory = AdaptiveMemoryLayer::new();
     let mut conversation = Conversation::new();

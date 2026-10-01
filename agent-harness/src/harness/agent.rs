@@ -3,7 +3,10 @@
 //! prompt → model → tool calls → tool results → model … until the model
 //! answers without requesting tools, or `max_turns` is exhausted.
 
+use std::time::Duration;
+
 use rig_core::{
+    ProviderError,
     completion::Usage,
     message::{Message, ToolCall, UserContent},
     tool::ToolExecutionError,
@@ -19,6 +22,22 @@ use crate::{
 
 /// Default cap on model round-trips per [`AgentLoop::run`].
 pub const DEFAULT_MAX_TURNS: usize = 8;
+
+/// Default number of retries for a model request that failed transiently.
+pub const DEFAULT_MAX_RETRIES: usize = 2;
+
+/// Wait before the first retry; each later retry waits four times longer
+/// (250 ms, then 1 s by default).
+pub const DEFAULT_RETRY_BACKOFF: Duration = Duration::from_millis(250);
+
+/// Whether a runtime error is worth retrying: only what rig classifies as
+/// transient (a request that failed before it was answered, a reply cut
+/// short, a provider's retryable status). Everything else fails at once.
+pub fn is_retryable(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<ProviderError>()
+        .is_some_and(ProviderError::is_retryable)
+}
 
 /// Result of a successful [`AgentLoop::run`]. Fields may be added.
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +67,8 @@ pub struct AgentLoop<R, P = AutoApprove, O = NoopObserver> {
     policy: P,
     observer: O,
     max_turns: usize,
+    max_retries: usize,
+    retry_backoff: Duration,
 }
 
 impl<R: ChatRuntime> AgentLoop<R> {
@@ -59,6 +80,8 @@ impl<R: ChatRuntime> AgentLoop<R> {
             policy: AutoApprove,
             observer: NoopObserver,
             max_turns: DEFAULT_MAX_TURNS,
+            max_retries: DEFAULT_MAX_RETRIES,
+            retry_backoff: DEFAULT_RETRY_BACKOFF,
         }
     }
 }
@@ -76,6 +99,8 @@ where
             policy,
             observer: self.observer,
             max_turns: self.max_turns,
+            max_retries: self.max_retries,
+            retry_backoff: self.retry_backoff,
         }
     }
 
@@ -86,11 +111,27 @@ where
             policy: self.policy,
             observer,
             max_turns: self.max_turns,
+            max_retries: self.max_retries,
+            retry_backoff: self.retry_backoff,
         }
     }
 
     pub fn with_max_turns(mut self, max_turns: usize) -> Self {
         self.max_turns = max_turns;
+        self
+    }
+
+    /// Retries per model request for transient failures ([`is_retryable`]).
+    /// Each failed attempt is reported to the observer (and audited by
+    /// `TaskRunner`). `0` disables retries.
+    pub fn with_max_retries(mut self, max_retries: usize) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
+
+    /// Wait before the first retry; later retries wait four times longer.
+    pub fn with_retry_backoff(mut self, backoff: Duration) -> Self {
+        self.retry_backoff = backoff;
         self
     }
 
@@ -147,10 +188,7 @@ where
         for turn in 1..=self.max_turns {
             self.observer.on_turn_start(turn);
 
-            let reply = self
-                .runtime
-                .chat(preamble, conversation.messages(), &tools)
-                .await?;
+            let reply = self.chat(turn, preamble, conversation, &tools).await?;
             self.observer.on_model_response(turn, &reply);
             usage += reply.usage;
 
@@ -181,6 +219,33 @@ where
         }
 
         Err(HarnessError::MaxTurnsExceeded(self.max_turns))
+    }
+
+    /// One model request, retried while the failure is transient.
+    async fn chat(
+        &self,
+        turn: usize,
+        preamble: &str,
+        conversation: &Conversation,
+        tools: &[rig_core::completion::ToolDefinition],
+    ) -> Result<crate::harness::AssistantTurn, HarnessError> {
+        let mut attempt = 0;
+        loop {
+            match self
+                .runtime
+                .chat(preamble, conversation.messages(), tools)
+                .await
+            {
+                Ok(reply) => return Ok(reply),
+                Err(error) if attempt < self.max_retries && is_retryable(&error) => {
+                    attempt += 1;
+                    self.observer.on_model_retry(turn, attempt, &error);
+                    let factor = 4u32.saturating_pow(attempt as u32 - 1);
+                    tokio::time::sleep(self.retry_backoff.saturating_mul(factor)).await;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
     }
 
     /// Approve, validate and execute one tool call, producing the tool-result
@@ -520,6 +585,113 @@ mod tests {
                 .pop_front()
                 .ok_or_else(|| anyhow::anyhow!("script exhausted"))
         }
+    }
+
+    /// Fails with `errors` (in order), then answers "ok".
+    struct Flaky {
+        errors: Mutex<VecDeque<anyhow::Error>>,
+        calls: AtomicUsize,
+    }
+
+    impl Flaky {
+        fn new(errors: impl IntoIterator<Item = anyhow::Error>) -> Self {
+            Self {
+                errors: Mutex::new(errors.into_iter().collect()),
+                calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl ChatRuntime for Flaky {
+        async fn chat(
+            &self,
+            _: &str,
+            _: &[Message],
+            _: &[ToolDefinition],
+        ) -> anyhow::Result<AssistantTurn> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            match self.errors.lock().unwrap().pop_front() {
+                Some(error) => Err(error),
+                None => Ok(AssistantTurn::text_reply("ok")),
+            }
+        }
+    }
+
+    fn transient() -> anyhow::Error {
+        anyhow::Error::from(ProviderError::Truncated).context("completion request failed")
+    }
+
+    #[derive(Default)]
+    struct Retries(Mutex<Vec<(usize, usize)>>);
+
+    impl Observer for Retries {
+        fn on_model_retry(&self, turn: usize, attempt: usize, _: &anyhow::Error) {
+            self.0.lock().unwrap().push((turn, attempt));
+        }
+    }
+
+    #[test]
+    fn only_transient_errors_are_retryable() {
+        assert!(is_retryable(&transient()), "through context too");
+        assert!(!is_retryable(&anyhow::anyhow!("boom")));
+        assert!(!is_retryable(&anyhow::Error::from(
+            ProviderError::Provider("bad key".into())
+        )));
+    }
+
+    #[tokio::test]
+    async fn transient_failures_are_retried_and_reported() {
+        let retries = Retries::default();
+        let agent = AgentLoop::new(Flaky::new([transient(), transient()]), registry([]))
+            .with_retry_backoff(Duration::ZERO)
+            .with_observer(&retries);
+
+        let outcome = agent.run("", &mut Conversation::new(), "hi").await.unwrap();
+
+        assert_eq!(outcome.output, "ok");
+        assert_eq!(outcome.turns, 1, "retries do not count as turns");
+        assert_eq!(agent.runtime().calls.load(Ordering::SeqCst), 3);
+        assert_eq!(*retries.0.lock().unwrap(), [(1, 1), (1, 2)]);
+    }
+
+    #[tokio::test]
+    async fn retries_are_bounded() {
+        let agent = AgentLoop::new(
+            Flaky::new([transient(), transient(), transient()]),
+            registry([]),
+        )
+        .with_retry_backoff(Duration::ZERO);
+        let mut conversation = Conversation::new();
+
+        let err = agent.run("", &mut conversation, "hi").await.unwrap_err();
+
+        assert!(matches!(err, HarnessError::Runtime(_)));
+        assert_eq!(
+            agent.runtime().calls.load(Ordering::SeqCst),
+            1 + DEFAULT_MAX_RETRIES
+        );
+        assert_eq!(conversation.len(), 0, "rolled back");
+    }
+
+    #[tokio::test]
+    async fn permanent_failures_and_disabled_retries_fail_at_once() {
+        let permanent = AgentLoop::new(Flaky::new([anyhow::anyhow!("bad key")]), registry([]));
+        assert!(
+            permanent
+                .run("", &mut Conversation::new(), "hi")
+                .await
+                .is_err()
+        );
+        assert_eq!(permanent.runtime().calls.load(Ordering::SeqCst), 1);
+
+        let disabled = AgentLoop::new(Flaky::new([transient()]), registry([])).with_max_retries(0);
+        assert!(
+            disabled
+                .run("", &mut Conversation::new(), "hi")
+                .await
+                .is_err()
+        );
+        assert_eq!(disabled.runtime().calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

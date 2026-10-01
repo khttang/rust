@@ -87,6 +87,7 @@ One JSON object per line (JSON Lines):
 |---|---|---|
 | `run_started` | before the loop | task, build (harness version, git commit, rustc version, target, profile), runtime, max turns, preamble, prompt, input, input file hashes, tools with risk, sandbox needs |
 | `model_turn` | each model response | turn, full content, usage, provider, reported model, response and request ids |
+| `model_retry` | a model request failed transiently and is retried | turn, attempt (1 for the first retry), error |
 | `tool_call` | each requested call | turn, call id, name, arguments, risk, approval and decider |
 | `tool_result` | after each call | turn, call id, name, ok, output or error text |
 | `process_run` | each program run | program, program SHA-256, args, cwd, exit code, timed out, elapsed, stdout/stderr SHA-256 and byte counts, truncated |

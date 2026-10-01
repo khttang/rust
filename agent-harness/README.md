@@ -68,8 +68,8 @@ src/
 ├── audit.rs             AuditLog (hash-chained JSONL), AuditEvent, verify_chain, redaction
 ├── process.rs           process::run / identify: audited, bounded program runs (no shell)
 ├── workspace.rs         Workspace: disposable working copy, path confinement, file digests
-├── policy.rs            ApprovalPolicy, ReviewContext, ToolRisk, Decider, RiskGate, AutoApprove, AllowList, DenyAll
-├── observer.rs          Observer lifecycle hooks, NoopObserver
+├── policy.rs            ApprovalPolicy, ReviewContext, ToolRisk, Decider, RiskGate, AutoApprove, AllowList, DenyAll, ConsoleApproval
+├── observer.rs          Observer lifecycle hooks, NoopObserver, StderrObserver
 ├── error.rs             HarnessError
 └── tools/               Example tools: Calculator, WordCount
 tests/
@@ -85,7 +85,7 @@ sandbox.Dockerfile       Sandbox image used by validate-openshell.sh
 providers/openai.yaml    OpenShell provider profile: OpenAI key injection, pinned to the harness
 crates/                  Extension crates (agent-harness-tools-*, agent-harness-task-*); see crates/README.md
 ├── agent-harness-tools-cbmc/        CBMC model checking as an audited, read-only tool (cbmc_verify)
-└── agent-harness-task-verified-fix/ Task: fix a C function until CBMC verifies it; anti-cheating checks; corpus
+└── agent-harness-task-verified-fix/ Task: fix a C function until CBMC verifies it; anti-cheating checks; corpus; `verified-fix` CLI
 images.env               Pinned build image (by digest) and Debian package versions
 test-in-container.sh     All tests + clippy on Linux, Rust 1.95, real CBMC (nothing skipped)
 Cargo.toml               Workspace root: shared versions (one rig-core for every crate) + the core crate
@@ -162,7 +162,7 @@ Answers are plain `String` today. Typed answers (via `CompletionRequest.output_s
 
 ### The agent loop
 
-`AgentLoop<R: ChatRuntime, P: ApprovalPolicy = AutoApprove, O: Observer = NoopObserver>` owns the runtime, a `ToolRegistry`, the policy, the observer and `max_turns` (default `DEFAULT_MAX_TURNS` = 8). It does **not** own conversation state: a `Conversation` is passed to `run` by `&mut`, so one loop can serve many conversations and a conversation survives a model switch (`runtime_mut().set_model(...)`).
+`AgentLoop<R: ChatRuntime, P: ApprovalPolicy = AutoApprove, O: Observer = NoopObserver>` owns the runtime, a `ToolRegistry`, the policy, the observer, `max_turns` (default `DEFAULT_MAX_TURNS` = 8) and a retry budget: a model request that fails transiently (what rig's `ProviderError::is_retryable` accepts: a request that failed before it was answered, a reply cut short, a provider's retryable status) is retried up to `DEFAULT_MAX_RETRIES` = 2 times, waiting 250 ms then 1 s (`with_max_retries`, `with_retry_backoff`). Retries do not count as turns, and other errors fail at once. It does **not** own conversation state: a `Conversation` is passed to `run` by `&mut`, so one loop can serve many conversations and a conversation survives a model switch (`runtime_mut().set_model(...)`).
 
 ```rust
 let agent = AgentLoop::new(runtime, tools)        // AutoApprove, NoopObserver
@@ -206,7 +206,7 @@ sequenceDiagram
 
 - **Tool results** carry the original call's `id` and `provider` identifiers, so every provider can match result to call. All results from one turn go into one user message.
 - **Errors.** `HarnessError::Runtime` (the model call failed), `EmptyResponse` (no content) and `MaxTurnsExceeded(n)` abort the run. On any error the conversation is **rolled back** to its state before the call, so a failed run never leaves a half-finished turn in the history. Tool problems are never errors; they become tool results.
-- **Observer hooks:** `on_turn_start`, `on_model_response` (with the `AssistantTurn`, including the provider and model it reports), `on_tool_call` (with the `ReviewContext` and the approval decision), `on_tool_result`, `on_final_answer`.
+- **Observer hooks:** `on_turn_start`, `on_model_response` (with the `AssistantTurn`, including the provider and model it reports), `on_model_retry` (turn, attempt, error), `on_tool_call` (with the `ReviewContext` and the approval decision), `on_tool_result`, `on_final_answer`.
 
 `Conversation` is a plain ordered `Vec<Message>` with `messages`, `push`, `len`, `clear` and `truncate`. It is unbounded. If you trim it, never separate an assistant tool-call message from the user message holding its results; providers reject orphaned calls or results.
 
@@ -515,7 +515,7 @@ Steps:
 ./validate-openshell.sh [--skip-build]
 ```
 
-Needs a running OpenShell gateway with the `docker` compute driver. It builds a Linux binary in `rust:1.95` (pinned by digest, with the git commit passed in for the audit trail), builds `sandbox.Dockerfile` (base image pinned by digest), checks that the gateway reports this policy as effective, then runs probes in one sandbox: the non-root user, seccomp, writes outside `/tmp`, reads outside the allowlist, `curl` (an unpinned binary) to listed and unlisted hosts, and the harness reaching Gemini with a dummy key. A last step attaches a temporary dummy-key provider built from `providers/openai.yaml` and checks that the sandbox sees only a placeholder while OpenAI receives the substituted value. Set `OPENSHELL_LIVE_OPENAI_PROVIDER=<provider>` to add one real call. Exits non-zero on any mismatch. On colima the gateway also needs a relay into the VM; the script detects this and prints the command. See the security doc for setup notes.
+Needs a running OpenShell gateway with the `docker` compute driver. It builds a Linux binary in `rust:1.95` (pinned by digest, with the git commit passed in for the audit trail), builds `sandbox.Dockerfile` (base image pinned by digest), checks that the gateway reports this policy as effective, then runs probes in one sandbox: the non-root user, seccomp, writes outside `/tmp`, reads outside the allowlist, `curl` (an unpinned binary) to listed and unlisted hosts, and the harness reaching Gemini with a dummy key. A last step attaches a temporary dummy-key provider built from `providers/openai.yaml` and checks that the sandbox sees only a placeholder while OpenAI receives the substituted value. Set `OPENSHELL_LIVE_OPENAI_PROVIDER=<provider>` to add one real call. Step 6 runs the verified-fix task in the sandbox: it checks that the policy covers the task's `sandbox-needs`, then runs `verified-fix self-test` (CBMC and `gcc` on every corpus case, under Landlock, audited). With `OPENSHELL_LIVE_FIX_CASE=<case>` as well, it runs the task end to end with the real model on that case and expects it to be accepted. Exits non-zero on any mismatch. On colima the gateway also needs a relay into the VM; the script detects this and prints the command. See the security doc for setup notes.
 
 ### Using the library
 
@@ -713,6 +713,7 @@ Unit tests sit next to each module, plus two integration tests in `tests/`; none
 - **`tests/rig_tool_macro.rs`** (integration, public API only): tools written with `#[rig_tool]` (sync, `async fn`, custom name) register, produce correct definitions and schemas, pass the registry's argument validation and error mapping, and run end to end in `AgentLoop` with the same toolset offered on every turn.
 - **`tests/task_runner.rs`** (integration, public API only): a toy task accepted with approval and fully audited (event sequence, deciders, input and output hashes, chain verification); mutating tools denied by the default policy; a model's claim of success rejected by the check; acceptance still run when the loop fails; an audit failure mid-run stopping tool calls and failing the run; a failed log refusing to start; one runner serving two inputs on one verified chain; `evaluate` failing closed.
 - **`crates/agent-harness-tools-cbmc`**: the parser against real CBMC 6.6.0 output (verified, overflow with counterexample, unwinding, parse error, every property kind), request validation (C identifiers, bounds, check allowlist), exit-code cross-checks; and against a real CBMC binary (`tests/real_cbmc.rs`): verification audited with the binary's hash, the overflow counterexample, loop bounds deciding unwinding, syntax errors, timeouts, workspace confinement, the tool's output and argument errors, `identify`.
+- **Retries** (`harness::agent`, `tests/task_runner.rs`): transient failures retried and reported, bounded retries, permanent errors and disabled retries failing at once, and a `model_retry` event in the audit trail.
 - **`crates/agent-harness-task-verified-fix`**: C text analysis, the patch tool and each acceptance check against its cheats (no CBMC); and end to end with real CBMC (`tests/corpus.rs`): the corpus (originals fail, references verify), honest fixes accepted for every case, the default policy blocking patches, and each cheat (assumption, deleted or weakened assertion, macro redefinition, edits outside the function, success claimed without a fix, patching another file) rejected by its check, including cheats that fool CBMC.
 - **Compile-time bound checks** assert `Send + Sync + 'static` on runtimes, `AgentLoop`, `Conversation`, memory, schemas, `ProviderModel` and policies.
 

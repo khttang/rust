@@ -1,10 +1,12 @@
 //! The verified-fix task.
 
 use agent_harness::{
-    Acceptance, HarnessError, RunOutcome, SandboxNeeds, Task, TaskContext, ToolRegistry,
-    audit::sha256_hex, evaluate,
+    Acceptance, AuditEvent, HarnessError, RunOutcome, SandboxNeeds, Task, TaskContext,
+    ToolRegistry, audit::sha256_hex, evaluate,
 };
-use agent_harness_tools_cbmc::{CbmcConfig, CbmcVerify, CheckFlag, Outcome, VerifyRequest, verify};
+use agent_harness_tools_cbmc::{
+    CbmcConfig, CbmcVerify, CheckFlag, Outcome, VerifyRequest, identify, verify,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -183,6 +185,17 @@ impl Task for VerifiedFix {
     ) -> Acceptance<FixReport> {
         let original = std::fs::read_to_string(ctx.workspace().source().join(&input.file)).ok();
         let current = ctx.workspace().read_to_string(&input.file).ok();
+        // Record which verifier produced the verdict (hash and version).
+        // Errors are not swallowed: an audit failure is sticky, so the
+        // verification below refuses to start and TaskRunner fails the run
+        // with TaskError::Audit; any other failure (e.g. CBMC missing) makes
+        // that verification, and so `cbmc_verified`, fail too.
+        // The failure itself goes into the trail for reviewers.
+        if let Err(error) = identify(ctx, &self.cbmc).await {
+            let _sticky = ctx.audit().record(AuditEvent::Note {
+                message: format!("could not identify CBMC: {error}"),
+            });
+        }
         // Independent re-verification with the task's bound and checks.
         let verification = verify(ctx, &self.cbmc, input.verify_request()).await;
 
