@@ -31,8 +31,10 @@ Runs took 6–47 s; accepted runs used 4–9 turns and 8,666–62,519 tokens
   removed the trailing newline after the closing brace (`\ No newline at end
   of file`). That text is outside the target function, so
   `only_target_changed` rejected the run. The check worked as specified; the
-  specification is strict about whitespace. Changing that is a policy
-  decision, and it would apply only to future runs: this run stays rejected.
+  specification was strict about whitespace. **Since then** (after this
+  run), `only_target_changed` tolerates an added or removed final newline and
+  nothing else; a test reproduces this case and now accepts it. Results are
+  never re-scored: this run stays rejected as recorded.
 - **`shift_scale`, run 1: an explanation instead of a fix.** After reading
   the file and running CBMC, the model answered with a long description of a
   `long long`-based fix but never called `apply_patch`. A text-only reply

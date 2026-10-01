@@ -84,7 +84,13 @@ trap cleanup EXIT
 log "1/6 preflight"
 command -v openshell >/dev/null || die "openshell CLI not found"
 command -v docker >/dev/null || die "docker CLI not found"
-openshell status 2>&1 | grep -q 'Status: Connected' || die "gateway not connected (openshell status)"
+# The gateway connection occasionally fails once; allow a few attempts.
+connected=0
+for attempt in 1 2 3; do
+  if openshell status 2>&1 | grep -q 'Status: Connected'; then connected=1; break; fi
+  sleep 2
+done
+[[ $connected -eq 1 ]] || die "gateway not connected after 3 attempts (openshell status)"
 # The docker driver runs the supervisor with host networking against
 # https://127.0.0.1:<gateway port>. On colima/lima that is the VM, not the Mac,
 # so a relay to the lima host (192.168.5.2) must be listening. mTLS rejecting
@@ -119,7 +125,8 @@ if [[ $SKIP_BUILD -eq 0 ]]; then
   rm -rf "$ROOT/.sandbox/image" && mkdir -p "$ROOT/.sandbox/image"
   cp "$RELEASE/agent-harness" "$RELEASE/verified-fix" "$ROOT/.sandbox/image/"
   cp -R "$CORPUS" "$ROOT/.sandbox/image/corpus"
-  docker build -q --build-arg CBMC_PACKAGE="$CBMC_PACKAGE" -f "$ROOT/sandbox.Dockerfile" \
+  docker build -q --build-arg CBMC_PACKAGE="$CBMC_PACKAGE" --build-arg LIBC_DEV_PACKAGE="$LIBC_DEV_PACKAGE" \
+    -f "$ROOT/sandbox.Dockerfile" \
     -t "$IMAGE" "$ROOT/.sandbox/image" >/dev/null 2>&1 || die "docker build failed"
 else
   log "2/6 build skipped"

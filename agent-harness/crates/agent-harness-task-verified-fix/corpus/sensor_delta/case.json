@@ -1,0 +1,6 @@
+{
+  "file": "delta.c",
+  "function": "sensor_delta",
+  "unwind": 4,
+  "description": "sensor_delta overflows when consecutive samples are far apart. Saturate the result to the int32_t range."
+}

@@ -172,7 +172,15 @@ impl<'a> Check<FixContext<'a>> for PreprocessorUnchanged {
     }
 }
 
-/// Text outside the target function is unchanged.
+/// Whether two file endings differ by nothing but one final newline (added
+/// or removed). Editors and models add or drop it routinely; it is the only
+/// difference [`OnlyTargetChanged`] tolerates.
+fn same_but_final_newline(a: &str, b: &str) -> bool {
+    a.strip_suffix('\n') == Some(b) || b.strip_suffix('\n') == Some(a)
+}
+
+/// Text outside the target function is unchanged, except that one final
+/// newline at the end of the file may be added or removed.
 pub struct OnlyTargetChanged;
 
 impl<'a> Check<FixContext<'a>> for OnlyTargetChanged {
@@ -197,8 +205,13 @@ impl<'a> Check<FixContext<'a>> for OnlyTargetChanged {
             ));
         };
         let same_prefix = original[..before.start] == current[..after.start];
-        let same_suffix = original[before.end..] == current[after.end..];
-        match (same_prefix, same_suffix) {
+        let (suffix_before, suffix_after) = (&original[before.end..], &current[after.end..]);
+        let newline_only =
+            suffix_before != suffix_after && same_but_final_newline(suffix_before, suffix_after);
+        match (same_prefix, suffix_before == suffix_after || newline_only) {
+            (true, true) if newline_only => CheckResult::pass(format!(
+                "only `{function}` changed (ignoring an added or removed final newline)"
+            )),
             (true, true) => CheckResult::pass(format!("only `{function}` changed")),
             (false, _) => CheckResult::fail(format!("text before `{function}` changed")),
             (_, false) => CheckResult::fail(format!("text after `{function}` changed")),
@@ -366,6 +379,29 @@ mod tests {
         assert!(!run(OnlyTargetChanged, &appended).await.passed);
         let renamed = ORIGINAL.replace("int f(int a)", "int g(int a)");
         assert!(!run(OnlyTargetChanged, &renamed).await.passed);
+    }
+
+    #[tokio::test]
+    async fn only_a_final_newline_difference_is_tolerated() {
+        let fixed = ORIGINAL.replace("  return a;", "  if (a >= 10) a = 9;\n  return a;");
+        let dropped = fixed.strip_suffix('\n').unwrap().to_owned();
+        let r = run(OnlyTargetChanged, &dropped).await;
+        assert!(
+            r.passed && r.detail.contains("final newline"),
+            "{}",
+            r.detail
+        );
+        let added = format!("{fixed}\n");
+        assert!(run(OnlyTargetChanged, &added).await.passed);
+
+        for (text, why) in [
+            (format!("{fixed}\n\n"), "two newlines"),
+            (format!("{fixed} "), "a trailing space"),
+            (format!("{}\r\n", fixed.strip_suffix('\n').unwrap()), "CRLF"),
+            (format!("{fixed}int x;"), "code after the function"),
+        ] {
+            assert!(!run(OnlyTargetChanged, &text).await.passed, "{why}");
+        }
     }
 
     #[tokio::test]

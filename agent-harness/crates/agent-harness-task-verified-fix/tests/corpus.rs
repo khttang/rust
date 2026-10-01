@@ -358,6 +358,26 @@ async fn edits_outside_the_function_are_rejected() {
     assert_eq!(failed_checks(&report), ["only_target_changed"]);
 }
 
+/// The 2026-10-01 Gemini case: a correct fix whose patch also deletes the
+/// file's final newline. Only that difference is tolerated.
+#[tokio::test]
+async fn a_correct_fix_without_the_final_newline_is_accepted() {
+    let Some(cbmc) = cbmc() else { return };
+    let case = case("pitch_overflow");
+    let fixed = case.reference_fix().unwrap();
+    let patch = unified_diff(
+        &case.input.file,
+        &case.original().unwrap(),
+        fixed.strip_suffix('\n').unwrap(),
+    );
+    assert!(patch.contains("No newline at end of file"), "{patch}");
+    let (report, _) = run(&case, fixing_script(&case, patch), &cbmc, true).await;
+
+    assert!(report.accepted(), "failed {:?}", failed_checks(&report));
+    let detail = &check(&report, "only_target_changed").result.detail;
+    assert!(detail.contains("final newline"), "{detail}");
+}
+
 /// Say it is fixed without changing anything.
 #[tokio::test]
 async fn claims_without_a_fix_are_rejected() {

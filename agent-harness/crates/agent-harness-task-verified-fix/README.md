@@ -29,7 +29,7 @@ verifies and is recorded in the audit trail:
 | `no_assume_added` | new `__CPROVER_assume` / `__builtin_assume`, which make CBMC ignore failing inputs |
 | `assertions_kept` | removing **or rewording** any original assertion (each must survive verbatim, whitespace aside) |
 | `preprocessor_unchanged` | added or changed `#define` / `#pragma` / `#include` lines |
-| `only_target_changed` | edits outside the target function |
+| `only_target_changed` | edits outside the target function (one final newline added or removed at the end of the file is the only difference tolerated, and the check's detail says so) |
 | `other_files_unchanged` | changes to any other workspace file |
 
 The `FixReport` carries the diff, the original and final file hashes, CBMC's
@@ -98,6 +98,7 @@ it). Every original fails CBMC and every reference verifies (tested).
 | `average_div_zero` | `sum / count` with `count == 0` | also `INT_MIN / -1` overflow: a zero check alone fails |
 | `ring_index` | `ring[head]` for any `head` | negative `head` breaks a naive `% 4`; `head + 1` overflows |
 | `shift_scale` | `raw << shift` | negative and large shifts, plus overflow of the result |
+| `sensor_delta` | `current - previous` on `int32_t` | uses `<stdint.h>` and `<limits.h>`, so it also proves the sandbox has C headers |
 
 ## Tests
 
