@@ -48,32 +48,37 @@ pub fn bundled_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus")
 }
 
+/// Load the case in `dir` (a directory with `case.json`, `src/` and
+/// `reference/`).
+pub fn load_case(dir: impl AsRef<Path>) -> io::Result<Case> {
+    let path = dir.as_ref().to_path_buf();
+    let manifest = path.join("case.json");
+    let input: FixInput = serde_json::from_str(&fs::read_to_string(&manifest)?).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{}: {e}", manifest.display()),
+        )
+    })?;
+    Ok(Case {
+        name: path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        input,
+        source: path.join("src"),
+        reference: path.join("reference"),
+    })
+}
+
 /// Load every case under `dir` (subdirectories with a `case.json`), sorted
 /// by name.
 pub fn load(dir: impl AsRef<Path>) -> io::Result<Vec<Case>> {
     let mut cases = Vec::new();
     for entry in fs::read_dir(dir)? {
         let path = entry?.path();
-        let manifest = path.join("case.json");
-        if !manifest.is_file() {
-            continue;
+        if path.join("case.json").is_file() {
+            cases.push(load_case(&path)?);
         }
-        let input: FixInput =
-            serde_json::from_str(&fs::read_to_string(&manifest)?).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("{}: {e}", manifest.display()),
-                )
-            })?;
-        cases.push(Case {
-            name: path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            input,
-            source: path.join("src"),
-            reference: path.join("reference"),
-        });
     }
     cases.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(cases)

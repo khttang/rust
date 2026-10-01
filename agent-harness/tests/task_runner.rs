@@ -495,6 +495,52 @@ async fn one_runner_serves_several_inputs_on_one_chain() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// Fails transiently once, then follows `inner`.
+struct FailsOnce {
+    failed: std::sync::atomic::AtomicBool,
+    inner: Scripted,
+}
+
+impl ChatRuntime for FailsOnce {
+    async fn chat(
+        &self,
+        preamble: &str,
+        history: &[Message],
+        tools: &[ToolDefinition],
+    ) -> anyhow::Result<AssistantTurn> {
+        if !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Err(anyhow::Error::from(
+                agent_harness::rig_core::ProviderError::Truncated,
+            ));
+        }
+        self.inner.chat(preamble, history, tools).await
+    }
+}
+
+#[tokio::test]
+async fn transient_model_failures_are_retried_and_audited() {
+    let source = source_dir();
+    let audit = AuditLog::in_memory();
+    let runtime = FailsOnce {
+        failed: std::sync::atomic::AtomicBool::new(false),
+        inner: fixing_script(),
+    };
+    let report = TaskRunner::new(runtime, audit.clone())
+        .with_policy(RiskGate::new(AutoApprove))
+        .run(&FixGreeting, input(), &source)
+        .await
+        .unwrap();
+
+    assert!(report.accepted());
+    let ev = events(&audit);
+    assert_eq!(ev[1]["kind"], "model_retry");
+    assert_eq!(ev[1]["turn"], 1);
+    assert_eq!(ev[1]["attempt"], 1);
+    assert!(!ev[1]["error"].as_str().unwrap().is_empty());
+    assert_eq!(ev[2]["kind"], "model_turn", "the retry succeeded");
+    cleanup(&source, &report.workspace);
+}
+
 #[test]
 fn acceptance_needs_at_least_one_passing_check() {
     let none: Acceptance<()> = Acceptance::new(Vec::new(), ());

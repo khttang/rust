@@ -535,6 +535,15 @@ impl<O: Observer> Observer for AuditObserver<'_, O> {
         self.inner.on_model_response(turn, response);
     }
 
+    fn on_model_retry(&self, turn: usize, attempt: usize, error: &anyhow::Error) {
+        self.record(AuditEvent::ModelRetry {
+            turn,
+            attempt,
+            error: format!("{error:#}"),
+        });
+        self.inner.on_model_retry(turn, attempt, error);
+    }
+
     fn on_tool_call(&self, call: &ToolCall, ctx: &ReviewContext, approval: &Approval) {
         self.record(AuditEvent::ToolCall {
             turn: ctx.turn,

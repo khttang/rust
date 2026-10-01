@@ -1,0 +1,42 @@
+# OpenShell provider profile for agent-harness → Google Gemini (AI Studio).
+#
+# OpenShell v0.1.2 ships no Gemini (AI Studio) profile; google-vertex-ai is a
+# different endpoint and auth. This custom profile is shaped like
+# providers/openai.yaml: narrowed to match openshell-policy.yaml, because an
+# attached provider adds its endpoints and binaries to the sandbox's effective
+# policy as a `_provider_<name>` entry.
+#   - binaries: only /app/agent-harness
+#   - endpoint: only POST /v1beta/models/*:generateContent, the one call
+#     rig 0.43 makes (its automatic cachedContents caching is opt-in and unused)
+#
+# Credential scope: GEMINI_API_KEY, sent in the `x-goog-api-key` header to
+# generativelanguage.googleapis.com only. The sandbox sees a placeholder; the
+# proxy substitutes the real key in the outbound request. Note: which binaries
+# may use the key is decided by the sandbox policy's binaries, not by this
+# list (see docs/security-architecture.md).
+#
+#   openshell profile lint   -f providers/gemini.yaml
+#   openshell profile import -f providers/gemini.yaml
+#   openshell provider create --name gemini --type agent-harness-gemini \
+#     --credential GEMINI_API_KEY      # read from your shell, never inline
+
+id: agent-harness-gemini
+display_name: Gemini (agent-harness)
+description: Gemini generateContent for /app/agent-harness only
+category: inference
+inference_capable: true
+credentials:
+  - name: api_key
+    description: Google AI Studio API key
+    env_vars: [GEMINI_API_KEY]
+    required: true
+    auth_style: header
+    header_name: x-goog-api-key
+endpoints:
+  - host: generativelanguage.googleapis.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: POST, path: "/v1beta/models/*:generateContent" }
+binaries: [/app/agent-harness]
