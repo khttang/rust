@@ -20,6 +20,7 @@ use rig_core::{
     operation::Completion,
     wire::Wire,
 };
+use serde::Serialize;
 
 /// A single-shot prompt interface over any model backend.
 ///
@@ -40,6 +41,12 @@ pub trait ModelRuntime: Send + Sync {
 /// Messages use rig's provider-neutral [`Message`] type, so a history built
 /// against one model can be replayed to another.
 pub trait ChatRuntime: Send + Sync {
+    /// What this runtime is configured to use, for the audit record.
+    /// Defaults to "unknown"; runtimes over real models should override it.
+    fn describe(&self) -> RuntimeInfo {
+        RuntimeInfo::default()
+    }
+
     /// Send the whole `history` (oldest first, last message is the newest
     /// user input or tool result) under system instructions `preamble`,
     /// advertising `tools`, and return the model's next turn.
@@ -53,14 +60,67 @@ pub trait ChatRuntime: Send + Sync {
     ) -> impl Future<Output = Result<AssistantTurn, anyhow::Error>> + Send;
 }
 
-/// One assistant turn returned by a [`ChatRuntime`].
+/// The provider and model behind a backend, as configured.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
+pub struct ModelIdentity {
+    /// Provider descriptor name, e.g. `"openai"`.
+    pub provider: Option<String>,
+    /// Requested model id.
+    pub model: Option<String>,
+}
+
+impl ModelIdentity {
+    pub fn new(provider: Option<String>, model: Option<String>) -> Self {
+        Self { provider, model }
+    }
+}
+
+/// A runtime's configuration, recorded at the start of every audited run.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[non_exhaustive]
+pub struct RuntimeInfo {
+    pub model: ModelIdentity,
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<u64>,
+}
+
+/// A shared reference to a runtime is a runtime, so one runtime can serve
+/// many loops (e.g. a corpus of task runs).
+impl<R: ChatRuntime + ?Sized> ChatRuntime for &R {
+    fn describe(&self) -> RuntimeInfo {
+        (**self).describe()
+    }
+
+    fn chat(
+        &self,
+        preamble: &str,
+        history: &[Message],
+        tools: &[ToolDefinition],
+    ) -> impl Future<Output = Result<AssistantTurn, anyhow::Error>> + Send {
+        (**self).chat(preamble, history, tools)
+    }
+}
+
+/// One assistant turn returned by a [`ChatRuntime`]. Fields may be added;
+/// build one with [`AssistantTurn::text_reply`] and set fields as needed.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct AssistantTurn {
     /// Text, tool calls and reasoning, in the order the model produced them.
     pub content: Vec<AssistantContent>,
     /// Provider id of the assistant message, replayed with the history.
     pub message_id: Option<String>,
     pub usage: Usage,
+    /// Provider that produced the turn, as reported by rig.
+    pub provider: Option<String>,
+    /// Model id the provider reported in its response (may differ from the
+    /// requested one).
+    pub model: Option<String>,
+    /// Provider response id, for diagnostics; never replayed.
+    pub response_id: Option<String>,
+    /// Request id from the provider's HTTP headers, when it sends one.
+    pub request_id: Option<String>,
 }
 
 impl AssistantTurn {
@@ -70,6 +130,10 @@ impl AssistantTurn {
             content: vec![AssistantContent::text(text.into())],
             message_id: None,
             usage: Usage::default(),
+            provider: None,
+            model: None,
+            response_id: None,
+            request_id: None,
         }
     }
 
@@ -111,6 +175,11 @@ impl AssistantTurn {
 /// (each provider's `completion(..)` model, and rig's `MockCompletionModel`),
 /// and for [`crate::ProviderModel`]. Calls are statically dispatched.
 pub trait CompletionBackend: Send + Sync {
+    /// The provider and model this backend calls.
+    fn identity(&self) -> ModelIdentity {
+        ModelIdentity::default()
+    }
+
     /// Send `request` and return the whole reply.
     fn complete(
         &self,
@@ -123,6 +192,10 @@ where
     W: Wire<Op = Completion>,
     T: Transport<W>,
 {
+    fn identity(&self) -> ModelIdentity {
+        ModelIdentity::new(Some(self.name().to_owned()), self.id().map(str::to_owned))
+    }
+
     fn complete(
         &self,
         request: CompletionRequest,
@@ -202,6 +275,14 @@ impl<M: CompletionBackend> HostedProviderRuntime<M> {
 }
 
 impl<M: CompletionBackend> ChatRuntime for HostedProviderRuntime<M> {
+    fn describe(&self) -> RuntimeInfo {
+        RuntimeInfo {
+            model: self.model.identity(),
+            temperature: self.temperature,
+            max_tokens: Some(self.max_tokens),
+        }
+    }
+
     async fn chat(
         &self,
         preamble: &str,
@@ -219,6 +300,10 @@ impl<M: CompletionBackend> ChatRuntime for HostedProviderRuntime<M> {
             content: response.choice,
             message_id: response.message_id,
             usage: response.usage,
+            provider: Some(response.provider),
+            model: response.model,
+            response_id: response.response_id,
+            request_id: response.provider_request_id,
         })
     }
 }
@@ -393,19 +478,17 @@ mod tests {
 
     #[test]
     fn assistant_turn_helpers() {
-        let turn = AssistantTurn {
-            content: vec![
-                AssistantContent::text("a"),
-                AssistantContent::tool_call(
-                    "c1",
-                    rig_core::message::ToolName::new("t").unwrap(),
-                    serde_json::json!({}),
-                ),
-                AssistantContent::text("b"),
-            ],
-            message_id: Some("msg_1".into()),
-            usage: Usage::default(),
-        };
+        let mut turn = AssistantTurn::text_reply("");
+        turn.content = vec![
+            AssistantContent::text("a"),
+            AssistantContent::tool_call(
+                "c1",
+                rig_core::message::ToolName::new("t").unwrap(),
+                serde_json::json!({}),
+            ),
+            AssistantContent::text("b"),
+        ];
+        turn.message_id = Some("msg_1".into());
         assert_eq!(turn.text(), "a\nb");
         assert_eq!(turn.tool_calls().count(), 1);
 

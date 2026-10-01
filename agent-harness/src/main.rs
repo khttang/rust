@@ -2,6 +2,8 @@
 //!
 //! Usage: `agent-harness [-m|--model <provider[:model]>] [prompt…]`
 //! Runs one prompt, or starts a REPL if none is given.
+//! `agent-harness --version` prints the build identity (version, git commit,
+//! compiler, target, profile) as JSON, the same `BuildInfo` audit records use.
 //!
 //! Model selection (first match wins): `--model`, `HARNESS_MODEL`, `anthropic`.
 //! Specs look like `anthropic:claude-sonnet-5`, `openai`, `ollama:llama3.2:3b`.
@@ -22,9 +24,9 @@
 use std::io::{self, BufRead, Write};
 
 use agent_harness::{
-    AdaptiveMemoryLayer, AgentLoop, AgentTask, Approval, ApprovalPolicy, AssistantTurn,
-    CompactionPolicy, CompactionReport, Conversation, HostedProviderRuntime, ModelSpec, Observer,
-    Provider, ProviderModel, ToolRegistry,
+    AdaptiveMemoryLayer, AgentLoop, AgentTask, Approval, ApprovalPolicy, AssistantTurn, BuildInfo,
+    CompactionPolicy, CompactionReport, Conversation, Decider, HostedProviderRuntime, ModelSpec,
+    Observer, Provider, ProviderModel, ReviewContext, ToolRegistry,
     rig_core::{
         message::ToolCall,
         tool::{ToolExecutionError, ToolOutput},
@@ -44,18 +46,28 @@ struct ConsoleApproval {
     auto_approve: bool,
 }
 
+/// The operator's OS login, the best identity available to a terminal
+/// approver. Recorded as a human decision.
+fn operator() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_else(|_| "unknown-operator".to_owned())
+}
+
 impl ApprovalPolicy for ConsoleApproval {
-    async fn review(&self, call: &ToolCall) -> Approval {
+    async fn review(&self, call: &ToolCall, _ctx: &ReviewContext) -> Approval {
         if self.auto_approve {
-            return Approval::Approved;
+            return Approval::approve(Decider::policy("env:HARNESS_AUTO_APPROVE"));
         }
         let prompt = format!(
             "\n[approve] {}({}) ? [y/N] ",
             call.function.name, call.function.arguments
         );
         match tokio::task::spawn_blocking(move || read_line(&prompt)).await {
-            Ok(Ok(Some(answer))) if answer.trim().eq_ignore_ascii_case("y") => Approval::Approved,
-            _ => Approval::deny("operator rejected the call"),
+            Ok(Ok(Some(answer))) if answer.trim().eq_ignore_ascii_case("y") => {
+                Approval::approve(Decider::human(operator()))
+            }
+            _ => Approval::deny(Decider::human(operator()), "operator rejected the call"),
         }
     }
 }
@@ -75,8 +87,17 @@ impl Observer for StderrObserver {
         }
     }
 
-    fn on_tool_call(&self, call: &ToolCall, approval: &Approval) {
-        eprintln!("  -> {} {:?}", call.function.name, approval);
+    fn on_tool_call(&self, call: &ToolCall, _ctx: &ReviewContext, approval: &Approval) {
+        let decision = if approval.is_approved() {
+            "approved"
+        } else {
+            "denied"
+        };
+        eprintln!(
+            "  -> {} {decision} by {:?}",
+            call.function.name,
+            approval.decider()
+        );
     }
 
     fn on_tool_result(&self, call: &ToolCall, result: &Result<ToolOutput, ToolExecutionError>) {
@@ -205,6 +226,10 @@ fn parse_args(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if matches!(std::env::args().nth(1).as_deref(), Some("--version" | "-V")) {
+        println!("{}", serde_json::to_string_pretty(&BuildInfo::current())?);
+        return Ok(());
+    }
     let (cli_spec, prompt_args) = parse_args(std::env::args().skip(1))?;
     let spec = cli_spec
         .or_else(|| std::env::var("HARNESS_MODEL").ok())
@@ -212,8 +237,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let auto_approve = std::env::var("HARNESS_AUTO_APPROVE").is_ok_and(|v| v == "1");
 
     let mut tools = ToolRegistry::new();
-    tools.register(Calculator)?;
-    tools.register(WordCount)?;
+    tools.register_read_only(Calculator)?;
+    tools.register_read_only(WordCount)?;
     let mut agent = AgentLoop::new(HostedProviderRuntime::new(load_model(&spec)?), tools)
         .with_policy(ConsoleApproval { auto_approve })
         .with_observer(StderrObserver);

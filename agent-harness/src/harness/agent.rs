@@ -13,15 +13,16 @@ use crate::{
     error::HarnessError,
     harness::{ChatRuntime, Conversation},
     observer::{NoopObserver, Observer},
-    policy::{Approval, ApprovalPolicy, AutoApprove},
+    policy::{Approval, ApprovalPolicy, AutoApprove, ReviewContext},
     tool::ToolRegistry,
 };
 
 /// Default cap on model round-trips per [`AgentLoop::run`].
 pub const DEFAULT_MAX_TURNS: usize = 8;
 
-/// Result of a successful [`AgentLoop::run`].
+/// Result of a successful [`AgentLoop::run`]. Fields may be added.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct RunOutcome {
     /// Text of the final assistant turn, parts joined with newlines.
     pub output: String,
@@ -174,7 +175,7 @@ where
             let mut results = Vec::with_capacity(calls.len());
             // Sequential on purpose: deterministic ordering of side effects.
             for call in &calls {
-                results.push(self.dispatch(call).await);
+                results.push(self.dispatch(turn, call).await);
             }
             conversation.push(Message::User { content: results });
         }
@@ -184,17 +185,19 @@ where
 
     /// Approve, validate and execute one tool call, producing the tool-result
     /// content for the model. Never fails: every problem becomes feedback.
-    async fn dispatch(&self, call: &ToolCall) -> UserContent {
-        let approval = self.policy.review(call).await;
-        self.observer.on_tool_call(call, &approval);
+    async fn dispatch(&self, turn: usize, call: &ToolCall) -> UserContent {
+        let name = call.function.name.as_str();
+        let ctx = ReviewContext::new(turn, self.tools.risk(name));
+        let approval = self.policy.review(call, &ctx).await;
+        self.observer.on_tool_call(call, &ctx, &approval);
 
         let result = match approval {
-            Approval::Approved => {
+            Approval::Approved { .. } => {
                 self.tools
-                    .execute(call.function.name.as_str(), call.function.arguments.clone())
+                    .execute(name, call.function.arguments.clone())
                     .await
             }
-            Approval::Denied { reason } => Err(ToolExecutionError::refused(format!(
+            Approval::Denied { reason, .. } => Err(ToolExecutionError::refused(format!(
                 "tool call denied: {reason}"
             ))),
         };
@@ -375,8 +378,8 @@ mod tests {
             results: AtomicUsize,
             denied: AtomicUsize,
         }
-        impl Observer for &'static Counter {
-            fn on_tool_call(&self, _: &ToolCall, approval: &Approval) {
+        impl Observer for Counter {
+            fn on_tool_call(&self, _: &ToolCall, _: &ReviewContext, approval: &Approval) {
                 if !approval.is_approved() {
                     self.denied.fetch_add(1, Ordering::SeqCst);
                 }
@@ -387,7 +390,7 @@ mod tests {
                 }
             }
         }
-        let counter: &'static Counter = Box::leak(Box::default());
+        let counter = Counter::default();
 
         let model = MockCompletionModel::from_turns([
             MockTurn::tool_call("c1", "calculator", json!({"op": "add", "a": 1, "b": 1})),
@@ -395,7 +398,7 @@ mod tests {
         ]);
         let agent = agent(&model, registry([calc]))
             .with_policy(AllowList::new(["word_count"]))
-            .with_observer(counter);
+            .with_observer(&counter);
 
         agent.run("", &mut Conversation::new(), "go").await.unwrap();
 
