@@ -63,13 +63,14 @@ docs/
 └── security-architecture.md   Policy review, egress data path, Sentry mapping
 openshell-policy.yaml    OpenShell sandbox policy (v0.0.116 schema)
 run-bounded.sh           Checks the policy, mocks its layout locally, then launches the REPL
+validate-openshell.sh    Runs the harness in a live OpenShell sandbox and checks each policy rule
+sandbox.Dockerfile       Sandbox image used by validate-openshell.sh
+providers/openai.yaml    OpenShell provider profile: OpenAI key injection, pinned to the harness
 ```
 
 ```mermaid
 flowchart LR
     CLI["main.rs (driver loop)"] -->|"prompt_agent(preamble, payload)"| RT["ModelRuntime"]
-validate-openshell.sh    Runs the harness in a live OpenShell sandbox and checks each policy rule
-sandbox.Dockerfile       Sandbox image used by validate-openshell.sh
     RT -.impl.- HPR["HostedProviderRuntime&lt;M&gt;"]
     HPR -->|"M: CompletionModel"| PM["ProviderModel"]
     PM --> A[anthropic]
@@ -209,7 +210,7 @@ Current status:
 
 - `openshell-policy.yaml` follows the OpenShell v0.0.116 schema. It allows only `POST /v1/messages` (Anthropic), `POST /v1/responses` (OpenAI), `POST /v1beta/models/*:generateContent` (Gemini) and `POST /api/chat` (Ollama via `host.openshell.internal`), runs as the non-root `sandbox` user with `landlock: hard_requirement`, and makes the binary read-only. OpenShell 0.1.2 loads it unchanged and enforces it; see *Live validation* in the security doc.
 - Gemini is allowlisted (`POST /v1beta/models/*:generateContent`) so a `GEMINI_API_KEY` can be used for testing. OpenShell has no built-in Gemini provider type, so keeping the key out of the sandbox needs a custom provider; see the security doc. OpenRouter is deliberately not allowlisted.
-- OpenShell enforcement was validated on 2026-09-30 with `validate-openshell.sh` (process, filesystem, binary pinning, host allowlist, Gemini egress). L7 method/path rules, credential injection and the other providers are not yet exercised. Sentry has not been tested. `run-bounded.sh` remains an offline mock.
+- OpenShell enforcement was validated on 2026-09-30 with `validate-openshell.sh` (process, filesystem, binary pinning, host allowlist, Gemini egress). OpenAI credential injection through `providers/openai.yaml` is validated, including a live call. L7 method/path rules and the Anthropic and Ollama paths are not yet exercised. Sentry has not been tested. `run-bounded.sh` remains an offline mock.
 
 ---
 
@@ -313,6 +314,14 @@ Steps:
 
 `--dry-run` runs every check but creates and launches nothing. `.sandbox/` is git-ignored.
 
+### OpenShell validation
+
+```sh
+./validate-openshell.sh [--skip-build]
+```
+
+Needs a running OpenShell gateway with the `docker` compute driver. It builds a Linux binary in `rust:1.90`, builds `sandbox.Dockerfile`, checks that the gateway reports this policy as effective, then runs probes in one sandbox: the non-root user, seccomp, writes outside `/tmp`, reads outside the allowlist, `curl` (an unpinned binary) to listed and unlisted hosts, and the harness reaching Gemini with a dummy key. A last step attaches a temporary dummy-key provider built from `providers/openai.yaml` and checks that the sandbox sees only a placeholder while OpenAI receives the substituted value. Set `OPENSHELL_LIVE_OPENAI_PROVIDER=<provider>` to add one real call. Exits non-zero on any mismatch. On colima the gateway also needs a relay into the VM; the script detects this and prints the command. See the security doc for setup notes.
+
 ### Using the library
 
 ```toml
@@ -404,14 +413,6 @@ impl PortableTool for Reverse {
     type Error = ReverseError;
 
     fn description(&self) -> String { "Reverse a string.".into() }
-### OpenShell validation
-
-```sh
-./validate-openshell.sh [--skip-build]
-```
-
-Needs a running OpenShell gateway with the `docker` compute driver. It builds a Linux binary in `rust:1.90`, builds `sandbox.Dockerfile`, checks that the gateway reports this policy as effective, then runs probes in one sandbox: the non-root user, seccomp, writes outside `/tmp`, reads outside the allowlist, `curl` (an unpinned binary) to listed and unlisted hosts, and the harness reaching Gemini with a dummy key. Exits non-zero on any mismatch. On colima the gateway also needs a relay into the VM; the script detects this and prints the command. See the security doc for setup notes.
-
 
     fn parameters(&self) -> serde_json::Value {
         json!({

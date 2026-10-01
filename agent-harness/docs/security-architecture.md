@@ -173,10 +173,33 @@ all of it; every check passed.
 | Binary pinning | `curl` to `generativelanguage.googleapis.com` and `api.anthropic.com` (listed hosts) is refused: only `/app/agent-harness` may use those policies. |
 | Unlisted host | `curl https://example.com` is refused. |
 | Allowed path | `agent-harness` → Gemini `generateContent` with a dummy key gets Google's `API_KEY_INVALID` reply, so the request crossed the proxy. No real credential used. |
+| Credential injection | With an `agent-harness-openai` provider attached, the sandbox's `OPENAI_API_KEY` is an `openshell:…` placeholder. A dummy-key provider makes OpenAI reply `Incorrect API key provided: sk-dummy…`, so the proxy substituted the value. `curl` holding the placeholder is refused. |
+| Live OpenAI | `agent-harness` → `gpt-5.6` via `POST /v1/responses` with a real key held only by the gateway: answered normally (opt-in check, one request). |
 
 Not yet exercised: the L7 `rules` themselves (a disallowed method or path
-from the pinned binary), Anthropic/OpenAI/Ollama paths, provider credential
-injection, and hot reload with `openshell policy set`.
+from the pinned binary), the Anthropic and Ollama paths, and hot reload with
+`openshell policy set`.
+
+#### Provider profiles widen the policy
+
+Attaching a provider adds the profile's `endpoints` and `binaries` to the
+effective policy as a separate `_provider_<name>` entry, concatenated with the
+sandbox policy rather than intersected with it. NVIDIA's example
+`providers/openai.yaml` (v0.1.2) grants `api.openai.com` `access: read-write`
+to `/usr/bin/curl`, so attaching it unchanged would let any curl in the image
+call OpenAI with the injected key. This repo's `providers/openai.yaml`
+(id `agent-harness-openai`) mirrors `openshell-policy.yaml` instead: binary
+`/app/agent-harness`, one rule `POST /v1/responses`. `validate-openshell.sh`
+fails if the imported copy drifts from the file. The brew install ships no
+profiles; import it with `openshell profile import -f providers/openai.yaml`,
+then create the provider from your shell so the key never appears in a
+command line:
+
+```sh
+read -rs OPENAI_API_KEY && export OPENAI_API_KEY
+openshell provider create --name openai --type agent-harness-openai --credential OPENAI_API_KEY
+unset OPENAI_API_KEY
+```
 
 Local setup notes (colima):
 

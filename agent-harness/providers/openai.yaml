@@ -1,0 +1,39 @@
+# OpenShell provider profile for agent-harness → OpenAI.
+#
+# Derived from NVIDIA OpenShell v0.1.2 providers/openai.yaml (Apache-2.0),
+# narrowed to match openshell-policy.yaml. Attaching a provider adds its
+# endpoints and binaries to the sandbox's effective policy as a
+# `_provider_<name>` entry, so this profile must not grant more than the policy:
+#   - binaries: only /app/agent-harness (upstream allows curl)
+#   - endpoint: only POST /v1/responses, the one call rig 0.42 makes
+#     (upstream: access: read-write)
+#
+# Credential scope: OPENAI_API_KEY, sent as a bearer authorization header to
+# api.openai.com only. The sandbox sees a placeholder; the proxy substitutes
+# the real key in the outbound request.
+#
+#   openshell profile lint   -f providers/openai.yaml
+#   openshell profile import -f providers/openai.yaml
+#   openshell provider create --name openai --type agent-harness-openai \
+#     --credential OPENAI_API_KEY      # read from your shell, never inline
+
+id: agent-harness-openai
+display_name: OpenAI (agent-harness)
+description: OpenAI Responses API for /app/agent-harness only
+category: inference
+inference_capable: true
+credentials:
+  - name: api_key
+    description: OpenAI API key
+    env_vars: [OPENAI_API_KEY]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+endpoints:
+  - host: api.openai.com
+    port: 443
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: { method: POST, path: /v1/responses }
+binaries: [/app/agent-harness]
