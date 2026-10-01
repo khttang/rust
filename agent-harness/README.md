@@ -323,7 +323,7 @@ let report = runner.run(&FixGreeting, input, "path/to/source").await?;
 assert!(report.accepted());                              // decided by the checks, not the model
 ```
 
-The first real task is [`agent-harness-task-verified-fix`](crates/agent-harness-task-verified-fix/README.md): fix a C function until CBMC verifies it, with six acceptance checks that reject the ways a verifier can be satisfied without a real fix. Its first [benchmark](crates/agent-harness-task-verified-fix/bench/2026-10-01/README.md), run in the OpenShell sandbox: `gpt-5.6` accepted 15/15; `gemini-3.5-flash` accepted in every run that finished, but was mostly stopped by its free-tier quota. All 30 audit logs are included and verify.
+The first real task is [`agent-harness-task-verified-fix`](crates/agent-harness-task-verified-fix/README.md): fix a C function until CBMC verifies it, with six acceptance checks that reject the ways a verifier can be satisfied without a real fix. Benchmarks, run in the OpenShell sandbox with every audit log included: `gpt-5.6` [accepted 15/15](crates/agent-harness-task-verified-fix/bench/2026-10-01/README.md); `gemini-3.5-flash` on a paid tier [accepted 13/15](crates/agent-harness-task-verified-fix/bench/2026-10-01-gemini-paid/README.md), with one correct fix rejected over a deleted final newline and one run that explained a fix without applying it.
 
 `TaskRunner::run`:
 

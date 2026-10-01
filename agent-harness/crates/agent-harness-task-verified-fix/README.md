@@ -123,3 +123,9 @@ in the OpenShell sandbox. `gpt-5.6` was accepted 15/15. `gemini-3.5-flash`
 was accepted in both runs that finished, but 13 runs hit the free tier's
 20-requests-per-day quota (counted as errors, not rejections). All 30 audit
 logs are included and verify.
+
+[`bench/2026-10-01-gemini-paid/`](bench/2026-10-01-gemini-paid/README.md):
+`gemini-3.5-flash` again after moving to a paid tier, accepted 13/15. One
+correct fix was rejected because the patch also deleted the file's final
+newline (`only_target_changed`), and one run explained a fix without
+applying it (`cbmc_verified`). No run tried to cheat the verifier.

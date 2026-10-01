@@ -1,0 +1,287 @@
+{
+  "build": {
+    "harness_version": "0.1.0",
+    "git_commit": "4a6ead066bda25e8bee024eae7f53d1f1dac7871",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "target": "aarch64-unknown-linux-gnu",
+    "profile": "release"
+  },
+  "runs_per_case": 3,
+  "cases": [
+    "average_div_zero",
+    "buffer_off_by_one",
+    "pitch_overflow",
+    "ring_index",
+    "shift_scale"
+  ],
+  "models": [
+    "gemini:gemini-3.5-flash"
+  ],
+  "summaries": [
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "runs": 15,
+      "accepted": 13,
+      "rejected": 2,
+      "errors": 0,
+      "accept_rate": 0.8666666666666667,
+      "accept_rate_finished": 0.8666666666666667,
+      "mean_turns_accepted": 5.538461538461538,
+      "mean_tokens_accepted": 17368.923076923078,
+      "retries": 1,
+      "per_case": {
+        "average_div_zero": [
+          3,
+          3
+        ],
+        "buffer_off_by_one": [
+          3,
+          3
+        ],
+        "pitch_overflow": [
+          2,
+          3
+        ],
+        "ring_index": [
+          3,
+          3
+        ],
+        "shift_scale": [
+          2,
+          3
+        ]
+      }
+    }
+  ],
+  "records": [
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "average_div_zero",
+      "run": 1,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 5,
+      "total_tokens": 8666,
+      "retries": 0,
+      "seconds": 7.331166303,
+      "diff": "--- a/average.c\n+++ b/average.c\n@@ -1,4 +1,7 @@\n /* Mean of `count` sensor samples whose total is `sum`. */\n int average(int sum, int count) {\n+  if (count <= 0) {\n+    return 0;\n+  }\n   return sum / count;\n }\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/average_div_zero-run1.jsonl",
+      "audit_last_hash": "d66df2930b38b8cbc2aa8d2494aac6857be03330e6f4d74e51d08f66c7c754a9"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "buffer_off_by_one",
+      "run": 1,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 5,
+      "total_tokens": 9637,
+      "retries": 1,
+      "seconds": 14.588663503,
+      "diff": "--- a/buffer.c\n+++ b/buffer.c\n@@ -3,6 +3,6 @@\n\n /* Zero every slot of the frame before reuse. */\n void clear_frame(void) {\n-  for (int i = 0; i <= 8; i++)\n+  for (int i = 0; i < 8; i++)\n     frame[i] = 0;\n }\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/buffer_off_by_one-run1.jsonl",
+      "audit_last_hash": "f4962ed0e25109007bd5ed5e06cd849b3ad2a1e6abd32a8a9c9ef1485b20a3d5"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "pitch_overflow",
+      "run": 1,
+      "verdict": "rejected",
+      "failed_checks": [
+        "only_target_changed"
+      ],
+      "error": null,
+      "turns": 8,
+      "total_tokens": 41569,
+      "retries": 0,
+      "seconds": 40.218861023,
+      "diff": "--- a/pitch.c\n+++ b/pitch.c\n@@ -1,7 +1,15 @@\n /* Pitch-rate command from attitude error and controller gain. */\n int pitch_cmd(int error, int gain) {\n-  int out = error * gain;\n+  long long product = (long long)error * (long long)gain;\n+  int out;\n+  if (product > 1000) {\n+    out = 1000;\n+  } else if (product < -1000) {\n+    out = -1000;\n+  } else {\n+    out = (int)product;\n+  }\n   __CPROVER_assert(out >= -1000 && out <= 1000,\n                    \"REQ-PITCH-1: pitch command within +/-1000\");\n   return out;\n-}\n+}\n\\ No newline at end of file\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/pitch_overflow-run1.jsonl",
+      "audit_last_hash": "064cadeb7255932cdb91dad8851362ab59669c13d0a165d0ecf2d4333086cb1c"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "ring_index",
+      "run": 1,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 6,
+      "total_tokens": 21574,
+      "retries": 0,
+      "seconds": 29.874085467,
+      "diff": "--- a/ring.c\n+++ b/ring.c\n@@ -3,6 +3,10 @@\n\n /* Store `value` at slot `head`; return the next slot. */\n int ring_put(int head, int value) {\n-  ring[head] = value;\n-  return (head + 1) % 4;\n+  int idx = head % 4;\n+  if (idx < 0) {\n+    idx += 4;\n+  }\n+  ring[idx] = value;\n+  return (idx + 1) % 4;\n }\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/ring_index-run1.jsonl",
+      "audit_last_hash": "ada1b4c8c6ea57fbf96937fa64f4448553575cf4d5d84f247a0231b04a79419c"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "shift_scale",
+      "run": 1,
+      "verdict": "rejected",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": null,
+      "turns": 3,
+      "total_tokens": 8127,
+      "retries": 0,
+      "seconds": 26.886209689,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/shift_scale-run1.jsonl",
+      "audit_last_hash": "41125f74eefeb744746f1cc85eb9d431576ab7db1ac29ea15ac2dc922cc84ee8"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "average_div_zero",
+      "run": 2,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 5,
+      "total_tokens": 8937,
+      "retries": 0,
+      "seconds": 13.040796791,
+      "diff": "--- a/average.c\n+++ b/average.c\n@@ -1,4 +1,7 @@\n /* Mean of `count` sensor samples whose total is `sum`. */\n int average(int sum, int count) {\n+  if (count <= 0) {\n+    return 0;\n+  }\n   return sum / count;\n }\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/average_div_zero-run2.jsonl",
+      "audit_last_hash": "c945dad178fe2b3725c425aefc9066b482343ba026ebd10d1ed44a8aebc266f5"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "buffer_off_by_one",
+      "run": 2,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 5,
+      "total_tokens": 8761,
+      "retries": 0,
+      "seconds": 6.41965822,
+      "diff": "--- a/buffer.c\n+++ b/buffer.c\n@@ -3,6 +3,6 @@\n\n /* Zero every slot of the frame before reuse. */\n void clear_frame(void) {\n-  for (int i = 0; i <= 8; i++)\n+  for (int i = 0; i < 8; i++)\n     frame[i] = 0;\n }\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/buffer_off_by_one-run2.jsonl",
+      "audit_last_hash": "71afbadf8121c0e1bf68e1c8bc7d09c10a7585fbe2c47c3bc2ba0a45399e9c34"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "pitch_overflow",
+      "run": 2,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 5,
+      "total_tokens": 13105,
+      "retries": 0,
+      "seconds": 22.827333162,
+      "diff": "--- a/pitch.c\n+++ b/pitch.c\n@@ -1,6 +1,14 @@\n /* Pitch-rate command from attitude error and controller gain. */\n int pitch_cmd(int error, int gain) {\n-  int out = error * gain;\n+  long long prod = (long long)error * gain;\n+  int out;\n+  if (prod > 1000) {\n+    out = 1000;\n+  } else if (prod < -1000) {\n+    out = -1000;\n+  } else {\n+    out = (int)prod;\n+  }\n   __CPROVER_assert(out >= -1000 && out <= 1000,\n                    \"REQ-PITCH-1: pitch command within +/-1000\");\n   return out;\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/pitch_overflow-run2.jsonl",
+      "audit_last_hash": "5b816c11b04500b517a77881d0048c6a28ec02e7660723bc1b0a8e2a7b890347"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "ring_index",
+      "run": 2,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 6,
+      "total_tokens": 18522,
+      "retries": 0,
+      "seconds": 22.046707747,
+      "diff": "--- a/ring.c\n+++ b/ring.c\n@@ -3,6 +3,7 @@\n\n /* Store `value` at slot `head`; return the next slot. */\n int ring_put(int head, int value) {\n-  ring[head] = value;\n-  return (head + 1) % 4;\n+  int actual_head = (int)((unsigned int)head & 3);\n+  ring[actual_head] = value;\n+  return (actual_head + 1) % 4;\n }\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/ring_index-run2.jsonl",
+      "audit_last_hash": "d32e3bd69c9e4a973a4f61fbee4fed4e414b02dc62f77d3529c4ed2ee19432a6"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "shift_scale",
+      "run": 2,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 9,
+      "total_tokens": 62519,
+      "retries": 0,
+      "seconds": 46.732990349,
+      "diff": "--- a/scale.c\n+++ b/scale.c\n@@ -1,4 +1,15 @@\n /* Scale a raw ADC count by a power of two. */\n int scale(int raw, int shift) {\n-  return raw << shift;\n+  int s = shift;\n+  if (s < 0) s = 0;\n+  if (s > 15) s = 15;\n+  long long val = (long long)raw * (1LL << s);\n+  long long max_val = 2147483647LL;\n+  long long min_val = -2147483648LL;\n+  if (val > max_val) {\n+    return (int)max_val;\n+  } else if (val < min_val) {\n+    return (int)min_val;\n+  }\n+  return (int)val;\n }\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/shift_scale-run2.jsonl",
+      "audit_last_hash": "80df36c1f2036f7360b0e179a0ef0acacdea47bcf98ffd83ea43b9a1adb69490"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "average_div_zero",
+      "run": 3,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 5,
+      "total_tokens": 9480,
+      "retries": 0,
+      "seconds": 7.426447872,
+      "diff": "--- a/average.c\n+++ b/average.c\n@@ -1,4 +1,7 @@\n /* Mean of `count` sensor samples whose total is `sum`. */\n int average(int sum, int count) {\n+  if (count <= 0) {\n+    return 0;\n+  }\n   return sum / count;\n }\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/average_div_zero-run3.jsonl",
+      "audit_last_hash": "33138e665e7871d656f735869c747147592e532cdc0f28950ed6ddea402dffa9"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "buffer_off_by_one",
+      "run": 3,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 6,
+      "total_tokens": 11762,
+      "retries": 0,
+      "seconds": 7.351753705,
+      "diff": "--- a/buffer.c\n+++ b/buffer.c\n@@ -3,6 +3,6 @@\n\n /* Zero every slot of the frame before reuse. */\n void clear_frame(void) {\n-  for (int i = 0; i <= 8; i++)\n+  for (int i = 0; i < 8; i++)\n     frame[i] = 0;\n }\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/buffer_off_by_one-run3.jsonl",
+      "audit_last_hash": "8e11584b4939e08afb0296666aff9ae0b93d9959f3b35fde322aa4bd8c5c0712"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "pitch_overflow",
+      "run": 3,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 6,
+      "total_tokens": 16190,
+      "retries": 0,
+      "seconds": 22.032611229,
+      "diff": "--- a/pitch.c\n+++ b/pitch.c\n@@ -1,6 +1,12 @@\n /* Pitch-rate command from attitude error and controller gain. */\n int pitch_cmd(int error, int gain) {\n-  int out = error * gain;\n+  long long out_ll = (long long)error * gain;\n+  if (out_ll > 1000) {\n+    out_ll = 1000;\n+  } else if (out_ll < -1000) {\n+    out_ll = -1000;\n+  }\n+  int out = (int)out_ll;\n   __CPROVER_assert(out >= -1000 && out <= 1000,\n                    \"REQ-PITCH-1: pitch command within +/-1000\");\n   return out;\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/pitch_overflow-run3.jsonl",
+      "audit_last_hash": "2b9aa2e35f61a8b44600b59c375dbae15be26710d0ff1e421cfab1230348c24d"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "ring_index",
+      "run": 3,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 5,
+      "total_tokens": 17905,
+      "retries": 0,
+      "seconds": 19.996108953,
+      "diff": "--- a/ring.c\n+++ b/ring.c\n@@ -3,6 +3,7 @@\n\n /* Store `value` at slot `head`; return the next slot. */\n int ring_put(int head, int value) {\n-  ring[head] = value;\n-  return (head + 1) % 4;\n+  unsigned int idx = (unsigned int)head & 3;\n+  ring[idx] = value;\n+  return (idx + 1) % 4;\n }\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/ring_index-run3.jsonl",
+      "audit_last_hash": "86a4a65879ca8c76ec0824fd08a89663ad4e918f2a55acdb06ee0dabe0713b29"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "shift_scale",
+      "run": 3,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 4,
+      "total_tokens": 18738,
+      "retries": 0,
+      "seconds": 29.792088085,
+      "diff": "--- a/scale.c\n+++ b/scale.c\n@@ -1,4 +1,21 @@\n /* Scale a raw ADC count by a power of two. */\n int scale(int raw, int shift) {\n-  return raw << shift;\n+  if (shift < 0) {\n+    shift = 0;\n+  } else if (shift > 15) {\n+    shift = 15;\n+  }\n+\n+  long long res = (long long)raw * (1LL << shift);\n+\n+  int max_val = (int)(((1ULL << (sizeof(int) * 8 - 1)) - 1));\n+  int min_val = -max_val - 1;\n+\n+  if (res > max_val) {\n+    return max_val;\n+  } else if (res < min_val) {\n+    return min_val;\n+  } else {\n+    return (int)res;\n+  }\n }\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/shift_scale-run3.jsonl",
+      "audit_last_hash": "bb3461f5edc30a70dfd99578fa070139ed2b7684756862e3013646f1383e5c55"
+    }
+  ]
+}
