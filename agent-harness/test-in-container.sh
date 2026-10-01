@@ -4,7 +4,7 @@
 # installed (CBMC_PACKAGE). AGENT_HARNESS_REQUIRE_CBMC=1 makes the CBMC
 # integration tests fail instead of skipping if CBMC were missing.
 #
-# Usage: ./test-in-container.sh [extra cargo test args…]
+# Usage: ./test-in-container.sh [cargo test args…]   (default: --workspace)
 #   e.g. ./test-in-container.sh -p agent-harness-tools-cbmc
 #
 # Needs docker. Writes only target/container-*/ under this directory and a
@@ -29,7 +29,8 @@ docker run --rm \
     apt-get -qq install -y --no-install-recommends cmake "$CBMC_PACKAGE" >/dev/null
     rustup component add clippy >/dev/null 2>&1
     echo "test-in-container: $(rustc --version); $(cbmc --version | head -1) at $(command -v cbmc)"
-    cargo test --workspace --locked "$@"
+    [ "$#" -gt 0 ] || set -- --workspace
+    cargo test --locked "$@"
     cargo clippy --workspace --all-targets --locked --quiet -- -D warnings
     echo "test-in-container: clippy ok"
   ' test-in-container "$@"

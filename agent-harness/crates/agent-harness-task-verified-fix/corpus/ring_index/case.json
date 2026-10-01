@@ -1,0 +1,6 @@
+{
+  "file": "ring.c",
+  "function": "ring_put",
+  "unwind": 4,
+  "description": "ring_put indexes outside the ring for out-of-range head values. Wrap any head value into the four slots."
+}

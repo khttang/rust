@@ -1,0 +1,6 @@
+{
+  "file": "average.c",
+  "function": "average",
+  "unwind": 4,
+  "description": "average crashes when there are no samples. Return 0 for a count that is not positive."
+}

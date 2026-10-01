@@ -240,10 +240,11 @@ pub trait Task: Send + Sync {
     /// The request for one input.
     fn prompt(&self, input: &Self::Input) -> String;
 
-    /// The task's small, fixed toolset. Register read-only tools with
+    /// The task's small, fixed toolset for `input` (e.g. a patch tool limited
+    /// to the input's target file). Register read-only tools with
     /// [`ToolRegistry::register_read_only`]; everything else is mutating and
     /// goes to the runner's approval policy.
-    fn tools(&self, ctx: &TaskContext) -> Result<ToolRegistry, HarnessError>;
+    fn tools(&self, ctx: &TaskContext, input: &Self::Input) -> Result<ToolRegistry, HarnessError>;
 
     fn max_turns(&self) -> usize {
         DEFAULT_MAX_TURNS
@@ -392,7 +393,7 @@ where
             workspace.keep();
         }
         let ctx = TaskContext::new(workspace.clone(), self.audit.clone());
-        let tools = task.tools(&ctx).map_err(TaskError::Tools)?;
+        let tools = task.tools(&ctx, &input).map_err(TaskError::Tools)?;
         let preamble = task.preamble();
         let prompt = task.prompt(&input);
 

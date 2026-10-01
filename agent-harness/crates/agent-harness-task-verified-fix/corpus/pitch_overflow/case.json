@@ -1,0 +1,6 @@
+{
+  "file": "pitch.c",
+  "function": "pitch_cmd",
+  "unwind": 4,
+  "description": "pitch_cmd can overflow on large errors or gains, and its command must stay within +/-1000 (REQ-PITCH-1)."
+}
