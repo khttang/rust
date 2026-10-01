@@ -23,7 +23,7 @@ use rig_core::{
     },
 };
 
-use crate::harness::CompletionBackend;
+use crate::harness::{CompletionBackend, runtime::ModelIdentity};
 
 /// A supported LLM provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -230,6 +230,13 @@ macro_rules! dispatch {
 }
 
 impl CompletionBackend for ProviderModel {
+    fn identity(&self) -> ModelIdentity {
+        ModelIdentity::new(
+            Some(self.spec.provider.name().to_owned()),
+            Some(self.spec.model.clone()),
+        )
+    }
+
     async fn complete(
         &self,
         request: CompletionRequest,

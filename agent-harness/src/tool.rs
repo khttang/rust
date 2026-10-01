@@ -14,7 +14,7 @@ use rig_core::{
 };
 use serde_json::Value;
 
-use crate::{error::HarnessError, validate::validate_args};
+use crate::{error::HarnessError, policy::ToolRisk, validate::validate_args};
 
 /// Boxed future returned by [`DynTool::call`].
 pub type ToolFuture<'a> =
@@ -53,13 +53,13 @@ where
     }
 }
 
-/// An ordered set of uniquely named tools.
+/// An ordered set of uniquely named tools, each with a declared [`ToolRisk`].
 ///
 /// Registration order is preserved so the tool list sent to the model — and
 /// therefore every request — is deterministic.
 #[derive(Default)]
 pub struct ToolRegistry {
-    tools: Vec<Box<dyn DynTool>>,
+    tools: Vec<(Box<dyn DynTool>, ToolRisk)>,
 }
 
 impl ToolRegistry {
@@ -67,17 +67,43 @@ impl ToolRegistry {
         Self::default()
     }
 
-    /// Register a tool. Fails if a tool with the same name already exists.
+    /// Register a tool as [`ToolRisk::Mutating`], the safe default. Fails if
+    /// a tool with the same name already exists.
     pub fn register<T: DynTool>(&mut self, tool: T) -> Result<(), HarnessError> {
+        self.register_with_risk(tool, ToolRisk::Mutating)
+    }
+
+    /// Register a tool that only reads ([`ToolRisk::ReadOnly`]).
+    pub fn register_read_only<T: DynTool>(&mut self, tool: T) -> Result<(), HarnessError> {
+        self.register_with_risk(tool, ToolRisk::ReadOnly)
+    }
+
+    /// Register a tool with an explicit risk.
+    pub fn register_with_risk<T: DynTool>(
+        &mut self,
+        tool: T,
+        risk: ToolRisk,
+    ) -> Result<(), HarnessError> {
         if self.get(tool.name()).is_some() {
             return Err(HarnessError::DuplicateTool(tool.name().to_owned()));
         }
-        self.tools.push(Box::new(tool));
+        self.tools.push((Box::new(tool), risk));
         Ok(())
     }
 
     pub fn get(&self, name: &str) -> Option<&dyn DynTool> {
-        self.tools.iter().find(|t| t.name() == name).map(|t| &**t)
+        self.tools
+            .iter()
+            .find(|(t, _)| t.name() == name)
+            .map(|(t, _)| &**t)
+    }
+
+    /// The declared risk of `name`; [`ToolRisk::Mutating`] for unknown tools.
+    pub fn risk(&self, name: &str) -> ToolRisk {
+        self.tools
+            .iter()
+            .find(|(t, _)| t.name() == name)
+            .map_or(ToolRisk::Mutating, |(_, risk)| *risk)
     }
 
     pub fn len(&self) -> usize {
@@ -89,11 +115,11 @@ impl ToolRegistry {
     }
 
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.tools.iter().map(|t| t.name())
+        self.tools.iter().map(|(t, _)| t.name())
     }
 
     pub fn definitions(&self) -> Vec<ToolDefinition> {
-        self.tools.iter().map(|t| t.definition()).collect()
+        self.tools.iter().map(|(t, _)| t.definition()).collect()
     }
 
     /// Look up, validate and execute a tool call.
@@ -127,6 +153,17 @@ mod tests {
         r.register(Calculator).unwrap();
         r.register(WordCount).unwrap();
         r
+    }
+
+    #[test]
+    fn risk_defaults_to_mutating_and_is_declarable() {
+        let mut r = ToolRegistry::new();
+        r.register(Calculator).unwrap();
+        r.register_read_only(WordCount).unwrap();
+        assert_eq!(r.risk("calculator"), ToolRisk::Mutating);
+        assert_eq!(r.risk("word_count"), ToolRisk::ReadOnly);
+        assert_eq!(r.risk("unknown"), ToolRisk::Mutating);
+        assert!(r.register_read_only(Calculator).is_err());
     }
 
     #[test]

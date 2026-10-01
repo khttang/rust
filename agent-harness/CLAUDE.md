@@ -18,3 +18,13 @@ You are operating as a principal autonomous systems architect. Your goal is to h
 ## 4. Code Generation & Refactoring Workflow
 * Write comprehensive unit tests for every newly registered Trait or Tool block before declaring a feature complete.
 * Always check how dynamic type modifications impact downstream trait objects (`Send + Sync + 'static`).
+
+## 5. Auditability & Certification Support
+Principles and record format: `docs/audit-and-certification.md`. The harness produces evidence for a certification process; it is not itself certified, and nothing should claim it is.
+* **Model output is never evidence.** Acceptance comes only from deterministic `Check`s run in `Task::accept` on the final workspace. Never build a report or verdict from the model's text.
+* **Every effect is audited.** New tools and tasks run external programs only through `process::run` / `process::identify`, register read-only tools with `register_read_only` (everything else is mutating and needs approval), and record anything else that changes state in the `AuditLog`.
+* **Fail closed.** An audit write failure must stop the run: never ignore an `AuditError`, add retries that hide one, or add a path that runs tools or programs without a healthy log.
+* **Traceability.** Every `Check` states what it verifies (`verifies()`) and attaches the audit record numbers of its evidence.
+* **Attribution.** Approvals name their `Decider`; never record an automatic decision as a human one.
+* **Configuration identification.** Record versions and hashes of anything that affects a result (programs, models, inputs, policy) when adding new components.
+* **Never weaken the trail silently.** Changes to the record format, hash chain, redaction or fail-closed behaviour need explicit user approval and a matching update to `docs/audit-and-certification.md`.

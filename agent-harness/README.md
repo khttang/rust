@@ -38,9 +38,11 @@ Execution code talks to two small traits, `ModelRuntime` (one prompt, text out) 
 | **Static dispatch by default** | `AgentLoop<R, P, O>` is generic over runtime, policy and observer; `HostedProviderRuntime<M>` over the rig model (`M: CompletionBackend`). Runtime provider switching uses a closed `enum` (`ProviderModel`), not `dyn`. The only type erasure is the tool registry. |
 | **`Send` futures** | Both runtime traits return `impl Future + Send`, so any runtime can be driven from `tokio::spawn`. Implementors still write plain `async fn`. |
 | **Deterministic execution** | Tool calls run sequentially in the order requested; memory renders sorted by key; compaction never depends on `HashMap` order. |
-| **Human-in-the-loop** | Every tool call passes an `ApprovalPolicy` before it runs. The CLI asks the operator by default. |
+| **Human-in-the-loop** | Every tool call passes an `ApprovalPolicy` with a `ReviewContext` (turn, the tool's declared `ToolRisk`). `RiskGate` lets read-only tools through and sends mutating ones to a human or other policy; with no approver configured, mutating tools are denied (`DenyAll`). Every decision names its `Decider`. |
+| **Verified, not trusted** | A task's result is decided by deterministic checks on the final workspace (`Task::accept`), never by the model's claims. |
+| **Auditable by construction** | Every task run writes a hash-chained, fail-closed audit record of inputs, model turns, tool calls, approvals, program runs and checks. See [Automated tasks](#automated-tasks) and `docs/audit-and-certification.md`. |
 | **Failures are feedback** | Unknown tools, bad arguments, tool errors and denials go back to the model as tool results. Only runtime-level failures abort a run, and then the conversation is rolled back. |
-| **No secrets in code** | Credentials are read only from environment variables, via rig's `ProviderClient::from_env`. |
+| **No secrets in code** | Credentials are read only from environment variables, via each rig provider's `from_env()`; the audit trail masks anything that looks like a key. |
 | **Thread safety** | Runtimes, `AgentLoop`, `Conversation`, `AdaptiveMemoryLayer`, `ProviderModel`, schemas and built-in policies are `Send + Sync + 'static`, and tests assert it. |
 | **Defense in depth** | The process is designed to run inside an NVIDIA OpenShell sandbox with an independent BlueField-4 Sentry monitor on the egress path. See [Security model](#security-model). |
 
@@ -60,14 +62,20 @@ src/
 ├── provider.rs          Provider, ModelSpec, ProviderModel: runtime provider/model selection
 ├── tool.rs              DynTool (object-safe tool) and ToolRegistry
 ├── validate.rs          Deterministic JSON-Schema-subset argument validation
-├── policy.rs            ApprovalPolicy, Approval, AutoApprove, AllowList
+├── task.rs              Task, TaskRunner, TaskContext, Check, evaluate, Acceptance, SandboxNeeds
+├── audit.rs             AuditLog (hash-chained JSONL), AuditEvent, verify_chain, redaction
+├── process.rs           process::run / identify: audited, bounded program runs (no shell)
+├── workspace.rs         Workspace: disposable working copy, path confinement, file digests
+├── policy.rs            ApprovalPolicy, ReviewContext, ToolRisk, Decider, RiskGate, AutoApprove, AllowList, DenyAll
 ├── observer.rs          Observer lifecycle hooks, NoopObserver
 ├── error.rs             HarnessError
 └── tools/               Example tools: Calculator, WordCount
 tests/
-└── rig_tool_macro.rs    #[rig_tool] tools against ToolRegistry and AgentLoop
+├── rig_tool_macro.rs    #[rig_tool] tools against ToolRegistry and AgentLoop
+└── task_runner.rs       A toy task end to end: approval, acceptance, audit, fail-closed
 docs/
-└── security-architecture.md   Policy review, egress data path, Sentry mapping
+├── security-architecture.md   Policy review, egress data path, Sentry mapping
+└── audit-and-certification.md Audit principles, record format, certification framing
 openshell-policy.yaml    OpenShell sandbox policy (v0.0.116 schema)
 run-bounded.sh           Checks the policy, mocks its layout locally, then launches the REPL
 validate-openshell.sh    Runs the harness in a live OpenShell sandbox and checks each policy rule
@@ -191,7 +199,7 @@ sequenceDiagram
 
 - **Tool results** carry the original call's `id` and `provider` identifiers, so every provider can match result to call. All results from one turn go into one user message.
 - **Errors.** `HarnessError::Runtime` (the model call failed), `EmptyResponse` (no content) and `MaxTurnsExceeded(n)` abort the run. On any error the conversation is **rolled back** to its state before the call, so a failed run never leaves a half-finished turn in the history. Tool problems are never errors; they become tool results.
-- **Observer hooks:** `on_turn_start`, `on_model_response` (with the `AssistantTurn`), `on_tool_call` (with the approval decision), `on_tool_result`, `on_final_answer`.
+- **Observer hooks:** `on_turn_start`, `on_model_response` (with the `AssistantTurn`, including the provider and model it reports), `on_tool_call` (with the `ReviewContext` and the approval decision), `on_tool_result`, `on_final_answer`.
 
 `Conversation` is a plain ordered `Vec<Message>` with `messages`, `push`, `len`, `clear` and `truncate`. It is unbounded. If you trim it, never separate an assistant tool-call message from the user message holding its results; providers reject orphaned calls or results.
 
@@ -252,7 +260,7 @@ Memory is **process-local and not persisted**. It is lost when the process exits
 model's ToolCall { name, arguments: serde_json::Value }
         │
         ▼
-ApprovalPolicy::review ──Denied──► ToolExecutionError::refused("tool call denied: …")
+ApprovalPolicy::review(call, ReviewContext { turn, risk }) ──Denied──► ToolExecutionError::refused("tool call denied: …")
         │ Approved
         ▼
 ToolRegistry::execute
@@ -267,13 +275,60 @@ ToolResult content sent back to the model
 
 | Component | Purpose |
 |---|---|
-| `ToolRegistry` | `register` (duplicate names → `HarnessError::DuplicateTool`), `definitions` (sent every turn, in registration order), and `execute(name, args)`. |
+| `ToolRegistry` | `register` (as `ToolRisk::Mutating`, the safe default), `register_read_only`, `register_with_risk`; duplicate names → `HarnessError::DuplicateTool`. `risk(name)` (unknown tools count as mutating), `definitions` (sent every turn, in registration order), and `execute(name, args)`. |
 | `DynTool` | Object-safe wrapper; every rig `PortableTool` gets it via a blanket impl. One `Box` per tool, one boxed future per call. |
 | `validate_args` | Deterministic subset of JSON Schema: `type: object`, `required`, and primitive property types. Serde is the final gate. |
-| `ApprovalPolicy` | Async gate: `AutoApprove`, `AllowList`; the CLI's `ConsoleApproval` asks the operator. |
+| `ApprovalPolicy` | Async gate, `review(call, ctx)`. Built in: `AutoApprove`, `AllowList`, `DenyAll`, and `RiskGate<P>` (read-only auto, everything else to `P`). The CLI's `ConsoleApproval` asks the operator and records them as a `Decider::Human`. A `&P` is a policy too. |
 | `tools::Calculator`, `tools::WordCount` | Example tools, registered in the CLI. |
 
 `ToolExecutionError::model_output()` decides what the model sees. rig's default `map_error` sends only safe, kind-level feedback; override it (as `Calculator` does) when the error text is safe and useful to show the model.
+
+### Automated tasks
+
+A task crate extends the harness with one kind of job. It implements `Task`; `TaskRunner` runs it the same way for every task:
+
+```rust
+impl Task for FixGreeting {
+    type Input = GreetingInput;            // Serialize: recorded in the audit trail
+    type Report = GreetingReport;          // Serialize: accompanies every Acceptance
+    fn name(&self) -> &str { "fix-greeting" }
+    fn preamble(&self) -> String { "Fix spelling mistakes.".into() }
+    fn prompt(&self, input: &GreetingInput) -> String { format!("Fix {}.", input.file) }
+    fn tools(&self, ctx: &TaskContext) -> Result<ToolRegistry, HarnessError> {
+        let mut tools = ToolRegistry::new();
+        tools.register_read_only(ReadFile(ctx.workspace().clone()))?;  // runs without approval
+        tools.register(WriteFile(ctx.workspace().clone()))?;            // mutating: needs approval
+        Ok(tools)
+    }
+    async fn accept(&self, ctx: &TaskContext, _: &GreetingInput, run: Option<&RunOutcome>)
+        -> Acceptance<GreetingReport>
+    {
+        let checks = vec![evaluate(&SaysHello, ctx, ctx.audit()).await];   // deterministic Check
+        Acceptance::new(checks, GreetingReport::from_workspace(ctx.workspace(), run))
+    }
+}
+
+let runner = TaskRunner::new(runtime, AuditLog::create("run.jsonl")?)
+    .with_policy(RiskGate::new(my_human_approver));     // default: RiskGate<DenyAll>
+let report = runner.run(&FixGreeting, input, "path/to/source").await?;
+assert!(report.accepted());                              // decided by the checks, not the model
+```
+
+`TaskRunner::run`:
+
+1. Copies `source` into a `Workspace` (a private temp directory; tools can only reach paths inside it, and the source is never modified) and records `run_started`: task, versions, runtime, prompt, input, input file hashes, tools with their risk, and the task's `SandboxNeeds`.
+2. Runs `AgentLoop` with the runner's policy behind an internal audit gate, and records every model turn, tool call (with risk and decider), tool result and the final answer.
+3. Records `run_ended` with the output file hashes, then **always** runs `Task::accept` (even when the loop failed) and records each check and the verdict with the report.
+
+| Piece | Role |
+|---|---|
+| `Task` | Instructions, a small fixed toolset, `max_turns`, `sandbox()` (pinned programs, egress), and `accept`. |
+| `Check` / `evaluate` | A small deterministic validation block that states what it `verifies()` and attaches audit record numbers as evidence. `evaluate` records it; a check that cannot be recorded fails. |
+| `Acceptance<R>` | Accepted only if there is at least one check and all pass, plus the task's typed report. |
+| `process::run` | The only way tools run programs: absolute path, no shell, cleared environment, timeout, capped output (full streams hashed), and an audit record with the binary's SHA-256. Refuses to start anything once the audit log has failed. `process::identify` records a program's version. |
+| `AuditLog` | Append-only JSON Lines with a SHA-256 chain; `verify_chain` detects edits, insertions, deletions and reordering. Fail-closed: after a write error, tool calls are denied and the run ends with `TaskError::Audit`. |
+
+The audit principles, the record format and what this means for certification are in [`docs/audit-and-certification.md`](docs/audit-and-certification.md). `tests/task_runner.rs` is a complete toy task.
 
 ---
 
@@ -621,15 +676,20 @@ The compiler's exhaustiveness checks point out any place you missed. Then add th
 
 ## Testing
 
-Unit tests sit next to each module, plus one integration test in `tests/`; none calls a live provider API.
+Unit tests sit next to each module, plus two integration tests in `tests/`; none calls a live provider API.
 
 - **`harness::agent`**: the loop against rig's `MockCompletionModel` (plain answers, tool round trips matching each result to its call id, tool errors fed back, denied calls not executed, `max_turns`, runtime errors, conversation across runs, model switching keeping conversation and tools), rollback of the conversation on every error path, and a scripted `ChatRuntime` with no rig model behind it to prove the loop is generic.
 - **`harness::runtime`**: `Echo` through a generic caller and `tokio::spawn`; `HostedProviderRuntime` request shape for `prompt_agent` and `chat` (history and tools passed through), structured tool calls, tool-only replies rejected by `prompt_agent`, `AssistantTurn` helpers, error propagation, model switching.
 - **`harness::conversation`**: push, truncate, clear.
 - **`harness::memory`**: learn/recall/forget, shared clones, concurrent writers from tasks, recovery from a poisoned lock, sorted rendering, manifest ingestion, and compaction (normalisation, multi-byte truncation, deterministic eviction, no-op within budget).
 - **`models`**: JSON round trips, override order, `value_text`, defaults.
-- **Other modules**: validation, registry, tools, policies, provider/spec parsing.
+- **`audit`**: the hash chain (records link and verify), detection of edited, deleted, reordered and re-hashed records, file logs refusing to overwrite, the failed state rejecting further records, credential masking before hashing.
+- **`workspace`**: copying without touching the source, rejecting `..`, absolute paths and symlink escapes, symlinked sources, sorted digests, removal on drop unless kept.
+- **`process`** (Unix): exit codes and output, cleared environment, timeout kills, capped-but-counted output, relative paths and missing programs, a failed audit log blocking programs, `identify`.
+- **`policy`**: each built-in policy's decision and decider, `RiskGate` routing by risk, approval serialization.
+- **Other modules**: validation, registry (including declared risk), tools, provider/spec parsing.
 - **`tests/rig_tool_macro.rs`** (integration, public API only): tools written with `#[rig_tool]` (sync, `async fn`, custom name) register, produce correct definitions and schemas, pass the registry's argument validation and error mapping, and run end to end in `AgentLoop` with the same toolset offered on every turn.
+- **`tests/task_runner.rs`** (integration, public API only): a toy task accepted with approval and fully audited (event sequence, deciders, input and output hashes, chain verification); mutating tools denied by the default policy; a model's claim of success rejected by the check; acceptance still run when the loop fails; an audit failure mid-run stopping tool calls and failing the run; a failed log refusing to start; one runner serving two inputs on one verified chain; `evaluate` failing closed.
 - **Compile-time bound checks** assert `Send + Sync + 'static` on runtimes, `AgentLoop`, `Conversation`, memory, schemas, `ProviderModel` and policies.
 
 ## Limitations
