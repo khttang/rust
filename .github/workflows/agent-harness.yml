@@ -1,0 +1,105 @@
+# CI for agent-harness/ (the only project in this repository it covers).
+#
+# - msrv-cbmc: the full suite on Linux with the minimum supported Rust (1.95,
+#   pinned image) and real CBMC, via agent-harness/test-in-container.sh.
+# - stable:    fmt, clippy, tests and rustdoc on the latest stable Rust, on
+#   Linux and macOS, so new lints and toolchain changes show up early.
+# - scripts:   shell syntax and the offline sandbox-policy checks.
+#
+# Not covered here: validate-openshell.sh, which needs a live OpenShell
+# gateway; run it locally before changing the sandbox policy or image.
+#
+# Supply chain: only first-party actions, pinned by commit SHA; read-only
+# token, not persisted by checkout.
+
+name: agent-harness
+
+on:
+  pull_request:
+    paths:
+      - "agent-harness/**"
+      - ".github/workflows/agent-harness.yml"
+  push:
+    branches: [main]
+    paths:
+      - "agent-harness/**"
+      - ".github/workflows/agent-harness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-harness-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: agent-harness
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  msrv-cbmc:
+    name: Rust 1.95 + CBMC (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tests and clippy in the pinned rust:1.95 image with CBMC
+        run: ./test-in-container.sh
+
+  stable:
+    name: stable (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+          rustc --version
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            agent-harness/target
+          key: ${{ runner.os }}-stable-${{ hashFiles('agent-harness/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-stable-
+      - name: fmt
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: test
+        run: cargo test --workspace --locked
+      - name: rustdoc
+        if: runner.os == 'Linux'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --locked
+
+  scripts:
+    name: scripts and offline policy checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Shell syntax
+        run: for f in *.sh; do bash -n "$f"; done
+      - name: Sandbox policy (offline structure and schema checks)
+        run: ./run-bounded.sh --dry-run
