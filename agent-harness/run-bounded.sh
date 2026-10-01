@@ -113,7 +113,7 @@ fi
 
 # 5. Report which provider credentials are present. Never print values.
 #    In the sandbox these are OpenShell placeholders, not real keys.
-for var in ANTHROPIC_API_KEY OPENAI_API_KEY; do
+for var in ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY; do
   if [[ -n "${!var:-}" ]]; then log "$var: set"; else log "$var: missing"; fi
 done
 case " $* ${HARNESS_MODEL:-} " in

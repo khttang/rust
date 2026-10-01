@@ -1,6 +1,8 @@
 # Security architecture: sandbox policy and egress monitoring
 
-Status: **draft, not validated against a live OpenShell or BlueField deployment.**
+Status: **draft.** The sandbox policy was validated against a live OpenShell
+0.1.2 gateway on 2026-09-30 (section 1, *Live validation*). The BlueField /
+Sentry design in section 2 is not validated.
 Claims about NVIDIA products are limited to what their public docs state; see
 [Sources](#sources). Anything not stated there is marked *unverified*.
 
@@ -30,7 +32,7 @@ below**, which addresses every finding.
 | 3 | High | `./secure_vault/` is mounted read-write "for adaptive memory", but `AdaptiveMemoryLayer` never touches disk. The mount has no consumer today. Either keep it (for a future persistence layer) or drop it; a writable path nobody needs is attack surface. |
 | 4 | Medium | `./src/` is mounted read-only "to prevent self-modification", but the process runs the **compiled binary**, not the source. Protecting `src/` does not protect the executable. The binary's path is what must be read-only (and ideally the only thing on the exec allow-list). |
 | 5 | Medium | `localhost:11434` inside a sandbox is the sandbox's own loopback, not the host's Ollama, and OpenShell rejects loopback (`127.0.0.0/8`) in `allowed_ips`. OpenShell's provider docs reach host-side Ollama at `host.openshell.internal:11434`; set `OLLAMA_API_BASE_URL=http://host.openshell.internal:11434` and allowlist that host. |
-| 6 | Low | `ProviderModel` also supports Gemini and OpenRouter. With `deny_all_other_outbound`, `/model gemini` or `/model openrouter:…` will fail at request time. Fine if intended; list them if not. |
+| 6 | Low | `ProviderModel` also supports Gemini and OpenRouter. With `deny_all_other_outbound`, `/model gemini` or `/model openrouter:…` will fail at request time. Fine if intended; list them if not. *(Gemini has since been added for testing; OpenRouter remains excluded.)* |
 | 7 | Low | The "Token and Credential Masking" section declares no masking. Masking is not a policy field: attach an OpenShell provider (`anthropic`, `openai`) to the sandbox and the agent's `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` become opaque placeholders that the proxy resolves in outbound **header values**, which covers rig's `x-api-key` and `Authorization: Bearer`. No code change or `request_body_credential_rewrite` is needed. Placeholders resolve only at the provider's bound endpoints. |
 | 8 | Low | Comment "Claude Pro CLI Gateway" is inaccurate: the harness calls the Anthropic API with an API key, not a Claude subscription. |
 
@@ -62,14 +64,15 @@ Requests the harness actually makes (from rig 0.42's source):
 |---|---|
 | Anthropic | `POST https://api.anthropic.com/v1/messages`, key in `x-api-key` |
 | OpenAI | `POST https://api.openai.com/v1/responses` (rig's default Responses API), key in `Authorization: Bearer` |
+| Gemini | `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`, key in `x-goog-api-key` |
 | Ollama | `POST {OLLAMA_API_BASE_URL}/api/chat`, plain HTTP |
 
 ### Current policy
 
 This is the content of `openshell-policy.yaml` (minus its header comments).
-It is schema-conformant against v0.0.116 but not yet run through the
-OpenShell CLI. `run-bounded.sh` re-checks the structural rules above on every
-launch. Assumes the binary is installed at `/app/agent-harness`.
+It was written against the v0.0.116 schema and OpenShell 0.1.2 loads it
+unchanged (see *Live validation*). `run-bounded.sh` re-checks the structural
+rules above on every launch. Assumes the binary is installed at `/app/agent-harness`.
 
 ```yaml
 version: 1
@@ -117,6 +120,18 @@ network_policies:
     binaries:
       - path: /app/agent-harness
 
+  gemini:
+    name: gemini-api
+    endpoints:
+      - host: generativelanguage.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/v1beta/models/*:generateContent" }
+    binaries:
+      - path: /app/agent-harness
+
   ollama:
     name: ollama-host
     endpoints:
@@ -135,8 +150,45 @@ Notes on the draft:
 - `rules` allow only the single call each provider needs, which is tighter than `access: read-write`. If a future rig version switches endpoint (e.g. OpenAI Chat Completions at `/v1/chat/completions`), requests will be blocked and appear in the logs; widen the rule then.
 - The `read_only` system paths assume a dynamically linked Linux binary. A fully static (musl) build could drop `/usr` and `/lib`. Compare with OpenShell's default policy before trimming further.
 - Credentials: attach OpenShell `anthropic` / `openai` providers rather than passing real keys in the environment (finding 7).
-- Gemini and OpenRouter are intentionally absent (finding 6).
+- Gemini (Google AI Studio key) is allowed for testing. OpenShell v0.0.116 has no built-in provider type for it; `google-vertex-ai` is for Vertex AI, a different endpoint and auth. Two ways to supply the key:
+  - **Custom provider (keeps the key out of the sandbox):** create a custom provider profile declaring `GEMINI_API_KEY`, attach it to the sandbox, and add `credential_binding: { provider: <name> }` to the Gemini endpoint. Because rig sends the key in the `x-goog-api-key` header, header placeholder resolution covers it. The binding is not in the committed policy because OpenShell rejects a policy that references an unattached provider. See OpenShell's Providers v2 docs for the profile format.
+  - **Pass the real key into the sandbox:** simpler, but the agent can then read the actual key. Acceptable for a short test with a low-quota key.
+- OpenRouter is intentionally absent (finding 6).
+- With the docker driver, `host.openshell.internal` maps to `127.0.0.1` in a host-networked supervisor. On colima/lima that is the Linux VM, not the Mac, so Ollama running on the Mac is unreachable from the sandbox without a relay, the same issue as the gateway relay below.
 - `network_middlewares` is omitted. A `openshell/regex` redaction stage is possible, but the reference only documents `config: { mode: redact }`; see OpenShell's Supervisor Middleware docs before adding one.
+
+### Live validation (2026-09-30)
+
+Environment: OpenShell 0.1.2 (Homebrew gateway, `docker` compute driver),
+colima VM on macOS arm64 (kernel 6.8, Landlock in the active LSM list), image
+built from `sandbox.Dockerfile` (Debian trixie). `validate-openshell.sh` runs
+all of it; every check passed.
+
+| Check | Result |
+|---|---|
+| Policy accepted | Loaded unchanged; `openshell policy get` reports it `Effective`, source `sandbox`. Stored as policy version 2. |
+| Gateway baseline | The effective policy adds read-only `/proc`, `/var/log`, `/dev/urandom` and read-write `/dev/null` to the file's paths. |
+| Process | Runs as `sandbox` (uid 999), `NoNewPrivs: 1`, `Seccomp: 2` (filter). |
+| Filesystem | Writes succeed only in `/tmp`; `/app`, `/etc`, `/usr`, `/` are denied. `/var/lib` and `/root` (not allowlisted) are unreadable, so Landlock enforces the allowlist rather than plain DAC. |
+| Binary pinning | `curl` to `generativelanguage.googleapis.com` and `api.anthropic.com` (listed hosts) is refused: only `/app/agent-harness` may use those policies. |
+| Unlisted host | `curl https://example.com` is refused. |
+| Allowed path | `agent-harness` → Gemini `generateContent` with a dummy key gets Google's `API_KEY_INVALID` reply, so the request crossed the proxy. No real credential used. |
+
+Not yet exercised: the L7 `rules` themselves (a disallowed method or path
+from the pinned binary), Anthropic/OpenAI/Ollama paths, provider credential
+injection, and hot reload with `openshell policy set`.
+
+Local setup notes (colima):
+
+- The Homebrew gateway service does not see docker contexts. Put
+  `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock` and
+  `OPENSHELL_COMPUTE_DRIVER=docker` in `~/.config/openshell/gateway.env`.
+- The docker driver starts the supervisor with host networking and
+  `OPENSHELL_ENDPOINT=https://127.0.0.1:17670`, which on colima is the VM. A
+  relay from VM `127.0.0.1:17670` to the lima host `192.168.5.2:17670` fixes
+  it; `validate-openshell.sh` prints the command when the gateway is
+  unreachable.
+- Sandbox names are capped at 19 characters.
 
 ## 2. Egress data path and where Sentry sits
 

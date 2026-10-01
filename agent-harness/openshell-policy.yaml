@@ -1,12 +1,14 @@
 # OpenShell sandbox policy for agent-harness.
 #
-# Schema: NVIDIA OpenShell v0.0.116 policy reference. Checked field by field
-# against the published schema; not yet run through the OpenShell CLI.
+# Schema: NVIDIA OpenShell v0.0.116 policy reference. Loaded and enforced by
+# OpenShell 0.1.2 (docker driver, colima) on 2026-09-30; validate-openshell.sh
+# re-runs those checks.
 # Rationale and review notes: docs/security-architecture.md.
 #
 # Assumes the release binary is installed at /app/agent-harness.
 # Credentials: attach OpenShell `anthropic` / `openai` providers to the sandbox
 # so the agent only sees placeholders; never put real keys in this file.
+# Gemini needs a custom provider for that (see docs/security-architecture.md).
 # Ollama: run with OLLAMA_API_BASE_URL=http://host.openshell.internal:11434
 
 version: 1
@@ -56,6 +58,21 @@ network_policies:
         enforcement: enforce
         rules:
           - allow: { method: POST, path: /v1/responses }
+    binaries:
+      - path: /app/agent-harness
+
+  # Google AI Studio (GEMINI_API_KEY, sent by rig in an x-goog-api-key
+  # header). OpenShell has no built-in provider type for it, so without a
+  # custom provider bound here the real key must be passed into the sandbox.
+  gemini:
+    name: gemini-api
+    endpoints:
+      - host: generativelanguage.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/v1beta/models/*:generateContent" }
     binaries:
       - path: /app/agent-harness
 
