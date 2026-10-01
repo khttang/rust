@@ -6,7 +6,7 @@ The core crate, `agent-harness`, stays at the workspace root.
 
 | Prefix | Holds | Example |
 |---|---|---|
-| `agent-harness-tools-*` | A tool family: `PortableTool`s around one library or program | `agent-harness-tools-cbmc` |
+| `agent-harness-tools-*` | A tool family: `PortableTool`s around one library or program | [`agent-harness-tools-cbmc`](agent-harness-tools-cbmc/README.md) (CBMC model checking) |
 | `agent-harness-task-*` | One automated task: instructions, a fixed toolset, an acceptance check, its corpus and CLI | `agent-harness-task-verified-fix` |
 
 A new crate inherits shared settings from the workspace:

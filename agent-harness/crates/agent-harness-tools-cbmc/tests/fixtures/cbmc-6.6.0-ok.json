@@ -1,0 +1,71 @@
+[
+  {
+    "program": "CBMC 6.6.0 (cbmc-6.6.0)"
+  },
+  {
+    "messageText": "CBMC version 6.6.0 (cbmc-6.6.0) 64-bit arm64 linux",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Type-checking ok",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Generating GOTO Program",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Adding CPROVER library (arm64)",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Removal of function pointers and virtual functions",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Generic Property Instrumentation",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Starting Bounded Model Checking",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Passing problem to propositional reduction",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "converting SSA",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Running propositional reduction",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "SAT checker: instance is UNSATISFIABLE",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "result": [
+      {
+        "description": "result within limits",
+        "property": "clamp.assertion.1",
+        "sourceLocation": {
+          "file": "ok.c",
+          "function": "clamp",
+          "line": "5",
+          "workingDirectory": "/w"
+        },
+        "status": "SUCCESS"
+      }
+    ]
+  },
+  {
+    "messageText": "VERIFICATION SUCCESSFUL",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "cProverStatus": "success"
+  }
+]

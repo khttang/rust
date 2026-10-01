@@ -82,6 +82,9 @@ validate-openshell.sh    Runs the harness in a live OpenShell sandbox and checks
 sandbox.Dockerfile       Sandbox image used by validate-openshell.sh
 providers/openai.yaml    OpenShell provider profile: OpenAI key injection, pinned to the harness
 crates/                  Extension crates (agent-harness-tools-*, agent-harness-task-*); see crates/README.md
+└── agent-harness-tools-cbmc/  CBMC model checking as an audited, read-only tool (cbmc_verify)
+images.env               Pinned build image (by digest) and Debian package versions
+test-in-container.sh     All tests + clippy on Linux, Rust 1.95, real CBMC (nothing skipped)
 Cargo.toml               Workspace root: shared versions (one rig-core for every crate) + the core crate
 build.rs                 Embeds rustc version, target and profile for the audit trail (BuildInfo)
 LICENSE-MIT, LICENSE-APACHE
@@ -385,9 +388,12 @@ Current status:
 
 ```sh
 cargo build --release
-cargo test
-cargo clippy --all-targets
+cargo test --workspace
+cargo clippy --workspace --all-targets
+./test-in-container.sh        # Linux, minimum Rust (1.95), real CBMC: the full suite
 ```
+
+Locally, the CBMC integration tests skip unless CBMC is installed (`CBMC_PATH` or `/usr/bin/cbmc`). `test-in-container.sh` installs the pinned CBMC and sets `AGENT_HARNESS_REQUIRE_CBMC=1`, so there they cannot skip.
 
 ### Using the CLI
 
@@ -691,6 +697,7 @@ Unit tests sit next to each module, plus two integration tests in `tests/`; none
 - **Other modules**: validation, registry (including declared risk), tools, provider/spec parsing.
 - **`tests/rig_tool_macro.rs`** (integration, public API only): tools written with `#[rig_tool]` (sync, `async fn`, custom name) register, produce correct definitions and schemas, pass the registry's argument validation and error mapping, and run end to end in `AgentLoop` with the same toolset offered on every turn.
 - **`tests/task_runner.rs`** (integration, public API only): a toy task accepted with approval and fully audited (event sequence, deciders, input and output hashes, chain verification); mutating tools denied by the default policy; a model's claim of success rejected by the check; acceptance still run when the loop fails; an audit failure mid-run stopping tool calls and failing the run; a failed log refusing to start; one runner serving two inputs on one verified chain; `evaluate` failing closed.
+- **`crates/agent-harness-tools-cbmc`**: the parser against real CBMC 6.6.0 output (verified, overflow with counterexample, unwinding, parse error, every property kind), request validation (C identifiers, bounds, check allowlist), exit-code cross-checks; and against a real CBMC binary (`tests/real_cbmc.rs`): verification audited with the binary's hash, the overflow counterexample, loop bounds deciding unwinding, syntax errors, timeouts, workspace confinement, the tool's output and argument errors, `identify`.
 - **Compile-time bound checks** assert `Send + Sync + 'static` on runtimes, `AgentLoop`, `Conversation`, memory, schemas, `ProviderModel` and policies.
 
 ## Limitations
