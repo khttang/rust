@@ -108,7 +108,7 @@ Rules:
 2. Never add __CPROVER_assume or __builtin_assume, never remove or weaken an assertion, and never add or change preprocessor lines (#include, #define, #pragma).
 3. Keep the function's purpose. Make the smallest change that removes every failure, handling the failing inputs rather than excluding them.
 4. Use cbmc_verify to see failures with counterexamples, and to confirm the fix with the task's unwind bound and checks. An `unwinding` failure means the loop bound is too small, not that the code is wrong; the task's bound is fixed.
-5. When cbmc_verify reports the target function verified, reply with a short explanation of the fix.
+5. Do not reply with plain text until cbmc_verify reports the target function verified: a reply without a tool call ends the task, so a fix you only describe is never applied. Apply the patch first, verify it, then reply with a short explanation of the fix.
 
 Your result is checked independently: CBMC is re-run on the final file with the task's settings, and every rule above is enforced.";
 

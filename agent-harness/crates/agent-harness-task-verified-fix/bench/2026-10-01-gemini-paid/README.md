@@ -39,7 +39,10 @@ Runs took 6–47 s; accepted runs used 4–9 turns and 8,666–62,519 tokens
   the file and running CBMC, the model answered with a long description of a
   `long long`-based fix but never called `apply_patch`. A text-only reply
   ends the agent loop, the file was unchanged, and `cbmc_verified` rejected
-  it. The other two runs of the same case were accepted.
+  it. The other two runs of the same case were accepted. **Since then**, the
+  task's instructions say plainly that a reply without a tool call ends the
+  task, so a described fix is never applied (rule 5); this run stays as
+  recorded.
 
 In neither case did the model try to cheat the verifier; both were caught
 by the check written for that failure.
