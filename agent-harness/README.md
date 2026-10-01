@@ -84,7 +84,8 @@ validate-openshell.sh    Runs the harness in a live OpenShell sandbox and checks
 sandbox.Dockerfile       Sandbox image used by validate-openshell.sh
 providers/openai.yaml    OpenShell provider profile: OpenAI key injection, pinned to the harness
 crates/                  Extension crates (agent-harness-tools-*, agent-harness-task-*); see crates/README.md
-└── agent-harness-tools-cbmc/  CBMC model checking as an audited, read-only tool (cbmc_verify)
+├── agent-harness-tools-cbmc/        CBMC model checking as an audited, read-only tool (cbmc_verify)
+└── agent-harness-task-verified-fix/ Task: fix a C function until CBMC verifies it; anti-cheating checks; corpus
 images.env               Pinned build image (by digest) and Debian package versions
 test-in-container.sh     All tests + clippy on Linux, Rust 1.95, real CBMC (nothing skipped)
 Cargo.toml               Workspace root: shared versions (one rig-core for every crate) + the core crate
@@ -300,7 +301,7 @@ impl Task for FixGreeting {
     fn name(&self) -> &str { "fix-greeting" }
     fn preamble(&self) -> String { "Fix spelling mistakes.".into() }
     fn prompt(&self, input: &GreetingInput) -> String { format!("Fix {}.", input.file) }
-    fn tools(&self, ctx: &TaskContext) -> Result<ToolRegistry, HarnessError> {
+    fn tools(&self, ctx: &TaskContext, _: &GreetingInput) -> Result<ToolRegistry, HarnessError> {
         let mut tools = ToolRegistry::new();
         tools.register_read_only(ReadFile(ctx.workspace().clone()))?;  // runs without approval
         tools.register(WriteFile(ctx.workspace().clone()))?;            // mutating: needs approval
@@ -320,6 +321,8 @@ let report = runner.run(&FixGreeting, input, "path/to/source").await?;
 assert!(report.accepted());                              // decided by the checks, not the model
 ```
 
+The first real task is [`agent-harness-task-verified-fix`](crates/agent-harness-task-verified-fix/README.md): fix a C function until CBMC verifies it, with six acceptance checks that reject the ways a verifier can be satisfied without a real fix.
+
 `TaskRunner::run`:
 
 1. Copies `source` into a `Workspace` (a private temp directory; tools can only reach paths inside it, and the source is never modified) and records `run_started`: task, versions, runtime, prompt, input, input file hashes, tools with their risk, and the task's `SandboxNeeds`.
@@ -328,7 +331,7 @@ assert!(report.accepted());                              // decided by the check
 
 | Piece | Role |
 |---|---|
-| `Task` | Instructions, a small fixed toolset, `max_turns`, `sandbox()` (pinned programs, egress), and `accept`. |
+| `Task` | Instructions, a small fixed toolset built per input (`tools(ctx, input)`, e.g. a patch tool limited to the input's file), `max_turns`, `sandbox()` (pinned programs, egress), and `accept`. |
 | `Check` / `evaluate` | A small deterministic validation block that states what it `verifies()` and attaches audit record numbers as evidence. `evaluate` records it; a check that cannot be recorded fails. |
 | `Acceptance<R>` | Accepted only if there is at least one check and all pass, plus the task's typed report. |
 | `process::run` | The only way tools run programs: absolute path, no shell, cleared environment, timeout, capped output (full streams hashed), and an audit record with the binary's SHA-256. Refuses to start anything once the audit log has failed. `process::identify` records a program's version. |
@@ -710,6 +713,7 @@ Unit tests sit next to each module, plus two integration tests in `tests/`; none
 - **`tests/rig_tool_macro.rs`** (integration, public API only): tools written with `#[rig_tool]` (sync, `async fn`, custom name) register, produce correct definitions and schemas, pass the registry's argument validation and error mapping, and run end to end in `AgentLoop` with the same toolset offered on every turn.
 - **`tests/task_runner.rs`** (integration, public API only): a toy task accepted with approval and fully audited (event sequence, deciders, input and output hashes, chain verification); mutating tools denied by the default policy; a model's claim of success rejected by the check; acceptance still run when the loop fails; an audit failure mid-run stopping tool calls and failing the run; a failed log refusing to start; one runner serving two inputs on one verified chain; `evaluate` failing closed.
 - **`crates/agent-harness-tools-cbmc`**: the parser against real CBMC 6.6.0 output (verified, overflow with counterexample, unwinding, parse error, every property kind), request validation (C identifiers, bounds, check allowlist), exit-code cross-checks; and against a real CBMC binary (`tests/real_cbmc.rs`): verification audited with the binary's hash, the overflow counterexample, loop bounds deciding unwinding, syntax errors, timeouts, workspace confinement, the tool's output and argument errors, `identify`.
+- **`crates/agent-harness-task-verified-fix`**: C text analysis, the patch tool and each acceptance check against its cheats (no CBMC); and end to end with real CBMC (`tests/corpus.rs`): the corpus (originals fail, references verify), honest fixes accepted for every case, the default policy blocking patches, and each cheat (assumption, deleted or weakened assertion, macro redefinition, edits outside the function, success claimed without a fix, patching another file) rejected by its check, including cheats that fool CBMC.
 - **Compile-time bound checks** assert `Send + Sync + 'static` on runtimes, `AgentLoop`, `Conversation`, memory, schemas, `ProviderModel` and policies.
 
 ## Limitations

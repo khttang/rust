@@ -1,0 +1,22 @@
+[package]
+name = "agent-harness-task-verified-fix"
+description = "Automated task: fix a C function until CBMC verifies it, with anti-cheating acceptance checks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+agent-harness.workspace = true
+agent-harness-tools-cbmc = { path = "../agent-harness-tools-cbmc" }
+diffy.workspace = true
+rig-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+tokio.workspace = true

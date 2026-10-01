@@ -131,7 +131,11 @@ impl Task for FixGreeting {
     fn prompt(&self, input: &GreetingInput) -> String {
         format!("Fix the spelling in {}.", input.file)
     }
-    fn tools(&self, ctx: &TaskContext) -> Result<ToolRegistry, HarnessError> {
+    fn tools(
+        &self,
+        ctx: &TaskContext,
+        _input: &GreetingInput,
+    ) -> Result<ToolRegistry, HarnessError> {
         let mut tools = ToolRegistry::new();
         tools.register_read_only(ReadFile(ctx.workspace().clone()))?;
         tools.register(WriteFile(ctx.workspace().clone()))?;

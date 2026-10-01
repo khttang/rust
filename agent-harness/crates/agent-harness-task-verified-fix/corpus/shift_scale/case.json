@@ -1,0 +1,6 @@
+{
+  "file": "scale.c",
+  "function": "scale",
+  "unwind": 4,
+  "description": "scale has undefined behaviour for negative or large shifts and overflows for large counts. Clamp the shift to 0..15 and saturate the result to the int range."
+}

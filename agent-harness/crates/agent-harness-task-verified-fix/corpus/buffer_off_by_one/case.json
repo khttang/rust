@@ -1,0 +1,6 @@
+{
+  "file": "buffer.c",
+  "function": "clear_frame",
+  "unwind": 10,
+  "description": "clear_frame writes past the end of the telemetry frame."
+}
