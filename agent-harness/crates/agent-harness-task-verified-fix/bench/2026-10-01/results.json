@@ -1,0 +1,569 @@
+{
+  "build": {
+    "harness_version": "0.1.0",
+    "git_commit": "d158cf7e5b5759cc80585cba2e5739f829a21e9d-dirty",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "target": "aarch64-unknown-linux-gnu",
+    "profile": "release"
+  },
+  "runs_per_case": 3,
+  "cases": [
+    "average_div_zero",
+    "buffer_off_by_one",
+    "pitch_overflow",
+    "ring_index",
+    "shift_scale"
+  ],
+  "models": [
+    "openai:gpt-5.6",
+    "gemini:gemini-3.5-flash"
+  ],
+  "summaries": [
+    {
+      "model": "openai:gpt-5.6",
+      "runs": 15,
+      "accepted": 15,
+      "rejected": 0,
+      "errors": 0,
+      "accept_rate": 1.0,
+      "accept_rate_finished": 1.0,
+      "mean_turns_accepted": 4.2,
+      "mean_tokens_accepted": 7228.266666666666,
+      "retries": 1,
+      "per_case": {
+        "average_div_zero": [
+          3,
+          3
+        ],
+        "buffer_off_by_one": [
+          3,
+          3
+        ],
+        "pitch_overflow": [
+          3,
+          3
+        ],
+        "ring_index": [
+          3,
+          3
+        ],
+        "shift_scale": [
+          3,
+          3
+        ]
+      }
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "runs": 15,
+      "accepted": 2,
+      "rejected": 0,
+      "errors": 13,
+      "accept_rate": 0.13333333333333333,
+      "accept_rate_finished": 1.0,
+      "mean_turns_accepted": 5.0,
+      "mean_tokens_accepted": 9653.0,
+      "retries": 26,
+      "per_case": {
+        "average_div_zero": [
+          1,
+          3
+        ],
+        "buffer_off_by_one": [
+          1,
+          3
+        ],
+        "pitch_overflow": [
+          0,
+          3
+        ],
+        "ring_index": [
+          0,
+          3
+        ],
+        "shift_scale": [
+          0,
+          3
+        ]
+      }
+    }
+  ],
+  "records": [
+    {
+      "model": "openai:gpt-5.6",
+      "case": "average_div_zero",
+      "run": 1,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 4,
+      "total_tokens": 5266,
+      "retries": 1,
+      "seconds": 14.100016731,
+      "diff": "--- a/average.c\n+++ b/average.c\n@@ -1,4 +1,7 @@\n /* Mean of `count` sensor samples whose total is `sum`. */\n int average(int sum, int count) {\n+  if (count <= 0) {\n+    return 0;\n+  }\n   return sum / count;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/average_div_zero-run1.jsonl",
+      "audit_last_hash": "babef2141ecb31014516d0ba41b7ec6aac34eb01f4fe54ff55e7e892070d5bd0"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "average_div_zero",
+      "run": 1,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 5,
+      "total_tokens": 9347,
+      "retries": 0,
+      "seconds": 201.590996634,
+      "diff": "--- a/average.c\n+++ b/average.c\n@@ -1,4 +1,7 @@\n /* Mean of `count` sensor samples whose total is `sum`. */\n int average(int sum, int count) {\n+  if (count <= 0) {\n+    return 0;\n+  }\n   return sum / count;\n }\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/average_div_zero-run1.jsonl",
+      "audit_last_hash": "89770480ee31d053948dce0345db58ba9374b24650539877b97f11905b3b8e46"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "buffer_off_by_one",
+      "run": 1,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 4,
+      "total_tokens": 6040,
+      "retries": 0,
+      "seconds": 11.628369345,
+      "diff": "--- a/buffer.c\n+++ b/buffer.c\n@@ -3,6 +3,6 @@\n\n /* Zero every slot of the frame before reuse. */\n void clear_frame(void) {\n-  for (int i = 0; i <= 8; i++)\n+  for (int i = 0; i < 8; i++)\n     frame[i] = 0;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/buffer_off_by_one-run1.jsonl",
+      "audit_last_hash": "b6d12bf1cf134cf540c5dd0234b2585b0984815c19436016038cab54daaeade8"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "buffer_off_by_one",
+      "run": 1,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 5,
+      "total_tokens": 9959,
+      "retries": 0,
+      "seconds": 42.458261586,
+      "diff": "--- a/buffer.c\n+++ b/buffer.c\n@@ -3,6 +3,6 @@\n\n /* Zero every slot of the frame before reuse. */\n void clear_frame(void) {\n-  for (int i = 0; i <= 8; i++)\n+  for (int i = 0; i < 8; i++)\n     frame[i] = 0;\n }\n",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/buffer_off_by_one-run1.jsonl",
+      "audit_last_hash": "db35e5f6d61bc435999a3b7824c57f780795e547f1bc5b03d34672cc10631b79"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "pitch_overflow",
+      "run": 1,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 4,
+      "total_tokens": 6286,
+      "retries": 0,
+      "seconds": 12.051110216,
+      "diff": "--- a/pitch.c\n+++ b/pitch.c\n@@ -1,7 +1,11 @@\n /* Pitch-rate command from attitude error and controller gain. */\n int pitch_cmd(int error, int gain) {\n-  int out = error * gain;\n+  long long out = (long long)error * (long long)gain;\n+  if (out > 1000)\n+    out = 1000;\n+  else if (out < -1000)\n+    out = -1000;\n   __CPROVER_assert(out >= -1000 && out <= 1000,\n                    \"REQ-PITCH-1: pitch command within +/-1000\");\n-  return out;\n+  return (int)out;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/pitch_overflow-run1.jsonl",
+      "audit_last_hash": "09bd940768de3dc9a1ca51ddec3ffc1ade0ef24d03adb908cb08eefbd650404e"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "pitch_overflow",
+      "run": 1,
+      "verdict": "error",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": "model runtime failed: completion request failed: ProviderResponseError: status 429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.5-flash\\nPlease retry in 2.991022745s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-3.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"2s\"\n      }\n    ]\n  }\n}\n",
+      "turns": null,
+      "total_tokens": null,
+      "retries": 2,
+      "seconds": 195.384896621,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/pitch_overflow-run1.jsonl",
+      "audit_last_hash": "4b53f4f5de3b45033608ecf30940dd69815f49413900ddaa6099c5782818732a"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "ring_index",
+      "run": 1,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 4,
+      "total_tokens": 7735,
+      "retries": 0,
+      "seconds": 15.301355028,
+      "diff": "--- a/ring.c\n+++ b/ring.c\n@@ -3,6 +3,8 @@\n\n /* Store `value` at slot `head`; return the next slot. */\n int ring_put(int head, int value) {\n+  head %= 4;\n+  if (head < 0) head += 4;\n   ring[head] = value;\n   return (head + 1) % 4;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/ring_index-run1.jsonl",
+      "audit_last_hash": "3c5a105da697348f780ed3f2ffc07b08aa68952f8f8e429945c2a7450fc4ffd5"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "ring_index",
+      "run": 1,
+      "verdict": "error",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": "model runtime failed: completion request failed: ProviderResponseError: status 429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.5-flash\\nPlease retry in 5.126159588s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-3.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"5s\"\n      }\n    ]\n  }\n}\n",
+      "turns": null,
+      "total_tokens": null,
+      "retries": 2,
+      "seconds": 42.552138615,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/ring_index-run1.jsonl",
+      "audit_last_hash": "1b67ada2ce7fc441b3e2a0863650e956c34617263f6ae1a2bc634fe97cc2d8c4"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "shift_scale",
+      "run": 1,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 5,
+      "total_tokens": 10307,
+      "retries": 0,
+      "seconds": 22.279295849,
+      "diff": "--- a/scale.c\n+++ b/scale.c\n@@ -1,4 +1,19 @@\n /* Scale a raw ADC count by a power of two. */\n int scale(int raw, int shift) {\n-  return raw << shift;\n+  int factor;\n+  const int int_max = 2147483647;\n+  const int int_min = -2147483647 - 1;\n+\n+  if (shift < 0)\n+    shift = 0;\n+  else if (shift > 15)\n+    shift = 15;\n+\n+  factor = 1 << shift;\n+  if (raw > int_max / factor)\n+    return int_max;\n+  if (raw < int_min / factor)\n+    return int_min;\n+\n+  return raw * factor;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/shift_scale-run1.jsonl",
+      "audit_last_hash": "89a5a6172e00a1b14a80485219d6d12b5952740b3bd7631f99ca23eebb9af133"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "shift_scale",
+      "run": 1,
+      "verdict": "error",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": "model runtime failed: completion request failed: ProviderResponseError: status 429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.5-flash\\nPlease retry in 41.093975125s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-3.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"41s\"\n      }\n    ]\n  }\n}\n",
+      "turns": null,
+      "total_tokens": null,
+      "retries": 2,
+      "seconds": 1.754876135,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/shift_scale-run1.jsonl",
+      "audit_last_hash": "5eca00d04a0378d0bf36dbdd5be5a2f0de716b0b0afe98a9b37b4c67758e6cd4"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "average_div_zero",
+      "run": 2,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 4,
+      "total_tokens": 5277,
+      "retries": 0,
+      "seconds": 9.375535626,
+      "diff": "--- a/average.c\n+++ b/average.c\n@@ -1,4 +1,7 @@\n /* Mean of `count` sensor samples whose total is `sum`. */\n int average(int sum, int count) {\n+  if (count <= 0) {\n+    return 0;\n+  }\n   return sum / count;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/average_div_zero-run2.jsonl",
+      "audit_last_hash": "c61fd932c74b7afabe6a759c6f21bf262a5bc99d67e23d457bf86bddf09eaa90"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "average_div_zero",
+      "run": 2,
+      "verdict": "error",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": "model runtime failed: completion request failed: ProviderResponseError: status 429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.5-flash\\nPlease retry in 29.972566071s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-3.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"29s\"\n      }\n    ]\n  }\n}\n",
+      "turns": null,
+      "total_tokens": null,
+      "retries": 2,
+      "seconds": 1.72999455,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/average_div_zero-run2.jsonl",
+      "audit_last_hash": "a0b85bb47799684e9f9015f84d4b74ff2a39d757e9c517496fdbf496567aaae8"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "buffer_off_by_one",
+      "run": 2,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 4,
+      "total_tokens": 6044,
+      "retries": 0,
+      "seconds": 10.066172533,
+      "diff": "--- a/buffer.c\n+++ b/buffer.c\n@@ -3,6 +3,6 @@\n\n /* Zero every slot of the frame before reuse. */\n void clear_frame(void) {\n-  for (int i = 0; i <= 8; i++)\n+  for (int i = 0; i < 8; i++)\n     frame[i] = 0;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/buffer_off_by_one-run2.jsonl",
+      "audit_last_hash": "161c9dc8104f1418ec773960f7594a2dc5cd948991a0e2869868b251ee7f0a1d"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "buffer_off_by_one",
+      "run": 2,
+      "verdict": "error",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": "model runtime failed: completion request failed: ProviderResponseError: status 429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.5-flash\\nPlease retry in 18.217098949s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-3.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"18s\"\n      }\n    ]\n  }\n}\n",
+      "turns": null,
+      "total_tokens": null,
+      "retries": 2,
+      "seconds": 1.698895119,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/buffer_off_by_one-run2.jsonl",
+      "audit_last_hash": "4e5a4a7f4cf52847a0cd3dcccd652196293374f232f663de7de8f72ac046fb76"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "pitch_overflow",
+      "run": 2,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 4,
+      "total_tokens": 6417,
+      "retries": 0,
+      "seconds": 15.272543755,
+      "diff": "--- a/pitch.c\n+++ b/pitch.c\n@@ -1,6 +1,7 @@\n /* Pitch-rate command from attitude error and controller gain. */\n int pitch_cmd(int error, int gain) {\n-  int out = error * gain;\n+  long long raw = (long long)error * gain;\n+  int out = raw > 1000 ? 1000 : (raw < -1000 ? -1000 : (int)raw);\n   __CPROVER_assert(out >= -1000 && out <= 1000,\n                    \"REQ-PITCH-1: pitch command within +/-1000\");\n   return out;\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/pitch_overflow-run2.jsonl",
+      "audit_last_hash": "26491ddca103d3629ac8a5d7e14ca0638cc0d974e9b3c9810c69bc86a826e59c"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "pitch_overflow",
+      "run": 2,
+      "verdict": "error",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": "model runtime failed: completion request failed: ProviderResponseError: status 429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.5-flash\\nPlease retry in 1.209450619s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-3.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"1s\"\n      }\n    ]\n  }\n}\n",
+      "turns": null,
+      "total_tokens": null,
+      "retries": 2,
+      "seconds": 1.731275168,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/pitch_overflow-run2.jsonl",
+      "audit_last_hash": "7ba465dbc19c521e491ebcfe36df2418e257cc470ba358caf04800660aefd12c"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "ring_index",
+      "run": 2,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 4,
+      "total_tokens": 7845,
+      "retries": 0,
+      "seconds": 13.877651097,
+      "diff": "--- a/ring.c\n+++ b/ring.c\n@@ -3,6 +3,8 @@\n\n /* Store `value` at slot `head`; return the next slot. */\n int ring_put(int head, int value) {\n-  ring[head] = value;\n-  return (head + 1) % 4;\n+  int slot = head % 4;\n+  if (slot < 0) slot += 4;\n+  ring[slot] = value;\n+  return (slot + 1) % 4;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/ring_index-run2.jsonl",
+      "audit_last_hash": "0f1b6cf7cbc1395bf0a09c666d1aac300439e0856810263173f2fc2ceb02a8c0"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "ring_index",
+      "run": 2,
+      "verdict": "error",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": "model runtime failed: completion request failed: ProviderResponseError: status 429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.5-flash\\nPlease retry in 45.65836047s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-3.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"45s\"\n      }\n    ]\n  }\n}\n",
+      "turns": null,
+      "total_tokens": null,
+      "retries": 2,
+      "seconds": 1.6670733869999999,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/ring_index-run2.jsonl",
+      "audit_last_hash": "1bff37c913bce210333eea7b36f2affaf102b2aa58063662e21c721884de1695"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "shift_scale",
+      "run": 2,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 5,
+      "total_tokens": 11043,
+      "retries": 0,
+      "seconds": 23.409435237,
+      "diff": "--- a/scale.c\n+++ b/scale.c\n@@ -1,4 +1,18 @@\n /* Scale a raw ADC count by a power of two. */\n int scale(int raw, int shift) {\n-  return raw << shift;\n+  const int int_max = 2147483647;\n+  const int int_min = -2147483647 - 1;\n+\n+  if (shift < 0)\n+    shift = 0;\n+  else if (shift > 15)\n+    shift = 15;\n+\n+  int factor = 1 << shift;\n+  if (raw > int_max / factor)\n+    return int_max;\n+  if (raw < int_min / factor)\n+    return int_min;\n+\n+  return raw * factor;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/shift_scale-run2.jsonl",
+      "audit_last_hash": "28cf4ff60d3da1b8017f2a70087a34b8898874fe7cc499f862bab42fceacb5b3"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "shift_scale",
+      "run": 2,
+      "verdict": "error",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": "model runtime failed: completion request failed: ProviderResponseError: status 429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.5-flash\\nPlease retry in 20.531177611s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"model\": \"gemini-3.5-flash\",\n              \"location\": \"global\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"20s\"\n      }\n    ]\n  }\n}\n",
+      "turns": null,
+      "total_tokens": null,
+      "retries": 2,
+      "seconds": 1.714230951,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/shift_scale-run2.jsonl",
+      "audit_last_hash": "f6ff907fb33467204b58d225b550725e13d38b088315316eb1161ed8dd76bcd4"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "average_div_zero",
+      "run": 3,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 4,
+      "total_tokens": 5262,
+      "retries": 0,
+      "seconds": 10.05677672,
+      "diff": "--- a/average.c\n+++ b/average.c\n@@ -1,4 +1,7 @@\n /* Mean of `count` sensor samples whose total is `sum`. */\n int average(int sum, int count) {\n+  if (count <= 0) {\n+    return 0;\n+  }\n   return sum / count;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/average_div_zero-run3.jsonl",
+      "audit_last_hash": "135dc95a708c0d0454794ca54d99a91459df13361cb2c330175d515c806eb35f"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "average_div_zero",
+      "run": 3,
+      "verdict": "error",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": "model runtime failed: completion request failed: ProviderResponseError: status 429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.5-flash\\nPlease retry in 8.774759167s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"model\": \"gemini-3.5-flash\",\n              \"location\": \"global\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"8s\"\n      }\n    ]\n  }\n}\n",
+      "turns": null,
+      "total_tokens": null,
+      "retries": 2,
+      "seconds": 1.714148325,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/average_div_zero-run3.jsonl",
+      "audit_last_hash": "fa917f399ee3e7eba003d6c071456fc6248ec29a9d8e3fbea7bf84d4db833022"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "buffer_off_by_one",
+      "run": 3,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 4,
+      "total_tokens": 6043,
+      "retries": 0,
+      "seconds": 12.180844254,
+      "diff": "--- a/buffer.c\n+++ b/buffer.c\n@@ -3,6 +3,6 @@\n\n /* Zero every slot of the frame before reuse. */\n void clear_frame(void) {\n-  for (int i = 0; i <= 8; i++)\n+  for (int i = 0; i < 8; i++)\n     frame[i] = 0;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/buffer_off_by_one-run3.jsonl",
+      "audit_last_hash": "5234a9bd82027c43a0d291ef90667baaafefcec20d9e0ea16d36b9c21b08a288"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "buffer_off_by_one",
+      "run": 3,
+      "verdict": "error",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": "model runtime failed: completion request failed: ProviderResponseError: status 429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.5-flash\\nPlease retry in 54.868303328s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-3.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"54s\"\n      }\n    ]\n  }\n}\n",
+      "turns": null,
+      "total_tokens": null,
+      "retries": 2,
+      "seconds": 1.7095756130000002,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/buffer_off_by_one-run3.jsonl",
+      "audit_last_hash": "627ea7008d76c29828dda631ee9a283021e732ad6670cbb39e7c70fe026d54d4"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "pitch_overflow",
+      "run": 3,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 4,
+      "total_tokens": 6327,
+      "retries": 0,
+      "seconds": 11.07399371,
+      "diff": "--- a/pitch.c\n+++ b/pitch.c\n@@ -1,7 +1,11 @@\n /* Pitch-rate command from attitude error and controller gain. */\n int pitch_cmd(int error, int gain) {\n-  int out = error * gain;\n+  long long out = (long long)error * gain;\n+  if (out > 1000)\n+    out = 1000;\n+  else if (out < -1000)\n+    out = -1000;\n   __CPROVER_assert(out >= -1000 && out <= 1000,\n                    \"REQ-PITCH-1: pitch command within +/-1000\");\n-  return out;\n+  return (int)out;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/pitch_overflow-run3.jsonl",
+      "audit_last_hash": "7cb162128badd60599c4fc025a9cccb6f3f252a355b1268735defe86b8f5cdbd"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "pitch_overflow",
+      "run": 3,
+      "verdict": "error",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": "model runtime failed: completion request failed: ProviderResponseError: status 429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.5-flash\\nPlease retry in 42.109582484s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-3.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"42s\"\n      }\n    ]\n  }\n}\n",
+      "turns": null,
+      "total_tokens": null,
+      "retries": 2,
+      "seconds": 1.690923573,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/pitch_overflow-run3.jsonl",
+      "audit_last_hash": "e1a0b0e9692ae820ff9ea9f73e5d6bfa3d26b54714168308b4a0ad79e4e5a0d0"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "ring_index",
+      "run": 3,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 4,
+      "total_tokens": 7717,
+      "retries": 0,
+      "seconds": 11.305807288,
+      "diff": "--- a/ring.c\n+++ b/ring.c\n@@ -3,6 +3,8 @@\n\n /* Store `value` at slot `head`; return the next slot. */\n int ring_put(int head, int value) {\n+  head %= 4;\n+  if (head < 0) head += 4;\n   ring[head] = value;\n   return (head + 1) % 4;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/ring_index-run3.jsonl",
+      "audit_last_hash": "a52b7fca6d9aaa32014dda0e097704179c6596c3837c5f0b180049dc27f47640"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "ring_index",
+      "run": 3,
+      "verdict": "error",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": "model runtime failed: completion request failed: ProviderResponseError: status 429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.5-flash\\nPlease retry in 29.133222106s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-3.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"29s\"\n      }\n    ]\n  }\n}\n",
+      "turns": null,
+      "total_tokens": null,
+      "retries": 2,
+      "seconds": 1.656228997,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/ring_index-run3.jsonl",
+      "audit_last_hash": "72f00d0b8233718685be26515ce6648d55f578fdd603a55824fabfd5fca003bd"
+    },
+    {
+      "model": "openai:gpt-5.6",
+      "case": "shift_scale",
+      "run": 3,
+      "verdict": "accepted",
+      "failed_checks": [],
+      "error": null,
+      "turns": 5,
+      "total_tokens": 10815,
+      "retries": 0,
+      "seconds": 19.265372242,
+      "diff": "--- a/scale.c\n+++ b/scale.c\n@@ -1,4 +1,16 @@\n /* Scale a raw ADC count by a power of two. */\n int scale(int raw, int shift) {\n-  return raw << shift;\n+  long long result;\n+\n+  if (shift < 0)\n+    shift = 0;\n+  else if (shift > 15)\n+    shift = 15;\n+\n+  result = (long long)raw * (1LL << shift);\n+  if (result > 2147483647LL)\n+    return 2147483647;\n+  if (result < -2147483647LL - 1LL)\n+    return -2147483647 - 1;\n+  return (int)result;\n }\n",
+      "audit": "/tmp/bench/openai_gpt-5.6/shift_scale-run3.jsonl",
+      "audit_last_hash": "a6b19951575146fea259667ecb9a633250e26e2064332f1b947ddd204e0f4ab3"
+    },
+    {
+      "model": "gemini:gemini-3.5-flash",
+      "case": "shift_scale",
+      "run": 3,
+      "verdict": "error",
+      "failed_checks": [
+        "cbmc_verified"
+      ],
+      "error": "model runtime failed: completion request failed: ProviderResponseError: status 429 Too Many Requests: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.5-flash\\nPlease retry in 8.166004289s.\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.Help\",\n        \"links\": [\n          {\n            \"description\": \"Learn more about Gemini API quotas\",\n            \"url\": \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.QuotaFailure\",\n        \"violations\": [\n          {\n            \"quotaMetric\": \"generativelanguage.googleapis.com/generate_content_free_tier_requests\",\n            \"quotaId\": \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\",\n            \"quotaDimensions\": {\n              \"location\": \"global\",\n              \"model\": \"gemini-3.5-flash\"\n            },\n            \"quotaValue\": \"20\"\n          }\n        ]\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"8s\"\n      }\n    ]\n  }\n}\n",
+      "turns": null,
+      "total_tokens": null,
+      "retries": 2,
+      "seconds": 1.718957369,
+      "diff": "",
+      "audit": "/tmp/bench/gemini_gemini-3.5-flash/shift_scale-run3.jsonl",
+      "audit_last_hash": "e19d08b00a59f2415d269f6ddbde9cae72a9358623e52db3774f790cbda285af"
+    }
+  ]
+}

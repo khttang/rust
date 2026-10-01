@@ -4,6 +4,8 @@
 //! Runs one prompt, or starts a REPL if none is given.
 //! `agent-harness --version` prints the build identity (version, git commit,
 //! compiler, target, profile) as JSON, the same `BuildInfo` audit records use.
+//! `agent-harness verify-audit <file>…` verifies audit logs' hash chains and
+//! prints each one's record count and last hash; exit code 1 if any is broken.
 //!
 //! Model selection (first match wins): `--model`, `HARNESS_MODEL`, `anthropic`.
 //! Specs look like `anthropic:claude-sonnet-5`, `openai`, `ollama:llama3.2:3b`.
@@ -28,6 +30,7 @@ use agent_harness::{
     ConsoleApproval, Conversation, HostedProviderRuntime, ModelSpec, Provider, ProviderModel,
     StderrObserver, ToolRegistry,
     tools::{Calculator, WordCount},
+    verify_chain,
 };
 
 type Runtime = HostedProviderRuntime<ProviderModel>;
@@ -153,10 +156,36 @@ fn parse_args(
     Ok((spec, rest))
 }
 
+/// Verify each audit log; print `ok <records> <last hash> <file>` or
+/// `BROKEN <reason> <file>`. True if every chain verifies.
+fn verify_audit(files: &[String]) -> bool {
+    let mut all_ok = true;
+    for file in files {
+        match verify_chain(file) {
+            Ok(chain) => println!("ok      {:>5} {} {file}", chain.records, chain.last_hash),
+            Err(error) => {
+                all_ok = false;
+                println!("BROKEN  {error} {file}");
+            }
+        }
+    }
+    all_ok
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if matches!(std::env::args().nth(1).as_deref(), Some("--version" | "-V")) {
         println!("{}", serde_json::to_string_pretty(&BuildInfo::current())?);
+        return Ok(());
+    }
+    if std::env::args().nth(1).as_deref() == Some("verify-audit") {
+        let files: Vec<String> = std::env::args().skip(2).collect();
+        if files.is_empty() {
+            return Err("usage: agent-harness verify-audit <file>…".into());
+        }
+        if !verify_audit(&files) {
+            std::process::exit(1);
+        }
         return Ok(());
     }
     let (cli_spec, prompt_args) = parse_args(std::env::args().skip(1))?;
@@ -218,4 +247,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use agent_harness::{AuditEvent, AuditLog};
+
+    use super::*;
+
+    #[test]
+    fn verify_audit_reports_broken_chains() {
+        let dir = std::env::temp_dir().join(format!(
+            "ah-verify-audit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let good = dir.join("good.jsonl");
+        let log = AuditLog::create(&good).unwrap();
+        for message in ["a", "b"] {
+            log.record(AuditEvent::Note {
+                message: message.to_owned(),
+            })
+            .unwrap();
+        }
+        let bad = dir.join("bad.jsonl");
+        std::fs::write(
+            &bad,
+            std::fs::read_to_string(&good)
+                .unwrap()
+                .replace("\"a\"", "\"A\""),
+        )
+        .unwrap();
+
+        let path = |p: &std::path::Path| p.display().to_string();
+        assert!(verify_audit(&[path(&good)]));
+        assert!(!verify_audit(&[path(&good), path(&bad)]));
+        assert!(!verify_audit(&[path(&dir.join("missing.jsonl"))]));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

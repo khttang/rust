@@ -12,6 +12,6 @@ pub use agent::{
 pub use conversation::Conversation;
 pub use memory::{AdaptiveMemoryLayer, CompactionPolicy, CompactionReport};
 pub use runtime::{
-    AssistantTurn, ChatRuntime, CompletionBackend, HostedProviderRuntime, ModelIdentity,
-    ModelRuntime, RuntimeInfo,
+    AssistantTurn, ChatRuntime, CompletionBackend, DEFAULT_REQUEST_TIMEOUT, HostedProviderRuntime,
+    ModelIdentity, ModelRuntime, RequestTimedOut, RuntimeInfo,
 };
