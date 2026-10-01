@@ -1,5 +1,7 @@
 # agent-harness
 
+[![agent-harness CI](https://github.com/khttang/rust/actions/workflows/agent-harness.yml/badge.svg?branch=main)](https://github.com/khttang/rust/actions/workflows/agent-harness.yml)
+
 A modular, type-safe, model-agnostic agent harness in Rust, built on [`rig-core`](https://crates.io/crates/rig-core) 0.43.
 
 Execution code talks to two small traits, `ModelRuntime` (one prompt, text out) and `ChatRuntime` (a conversation plus tools, one structured turn out), and never to a provider directly. Swapping between Anthropic, OpenAI, Gemini, Ollama and OpenRouter (or a mock in tests) is a change of type parameter or a runtime `/model` command, not a change of calling code. `AgentLoop` drives multi-turn, tool-calling runs with a human-in-the-loop approval gate. Learned environment facts live in a shared, schema-less `AdaptiveMemoryLayer` that can be compacted for small local models. The crate ships a library (`agent_harness`) and an interactive CLI (`agent-harness`).
@@ -392,6 +394,16 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 ./test-in-container.sh        # Linux, minimum Rust (1.95), real CBMC: the full suite
 ```
+
+**CI** (`.github/workflows/agent-harness.yml` at the repository root) runs on every pull request and push to `main` that touches `agent-harness/`:
+
+| Job | What |
+|---|---|
+| Rust 1.95 + CBMC (Linux) | `./test-in-container.sh`: the full suite and clippy with the minimum supported Rust and real CBMC |
+| stable (Linux, macOS) | fmt, clippy `-D warnings`, tests, rustdoc `-D warnings` on the latest stable Rust |
+| scripts | shell syntax, `run-bounded.sh --dry-run` (offline policy checks) |
+
+`validate-openshell.sh` needs a live OpenShell gateway and is not run in CI; run it locally before changing the sandbox policy or image.
 
 Locally, the CBMC integration tests skip unless CBMC is installed (`CBMC_PATH` or `/usr/bin/cbmc`). `test-in-container.sh` installs the pinned CBMC and sets `AGENT_HARNESS_REQUIRE_CBMC=1`, so there they cannot skip.
 
