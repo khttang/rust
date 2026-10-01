@@ -105,6 +105,7 @@ mod tests {
                 "buffer_off_by_one",
                 "pitch_overflow",
                 "ring_index",
+                "sensor_delta",
                 "shift_scale"
             ]
         );
