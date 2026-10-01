@@ -64,6 +64,8 @@ src/
 ├── observer.rs          Observer lifecycle hooks, NoopObserver
 ├── error.rs             HarnessError
 └── tools/               Example tools: Calculator, WordCount
+tests/
+└── rig_tool_macro.rs    #[rig_tool] tools against ToolRegistry and AgentLoop
 docs/
 └── security-architecture.md   Policy review, egress data path, Sentry mapping
 openshell-policy.yaml    OpenShell sandbox policy (v0.0.116 schema)
@@ -525,7 +527,30 @@ The future your `async fn` produces must be `Send`: don't hold a `std::sync` gua
 
 ### Writing a tool
 
-Implement rig's `PortableTool`. It automatically becomes a `DynTool` and can be registered with `ToolRegistry::register`.
+Any rig `PortableTool` automatically becomes a `DynTool` and can be registered with `ToolRegistry::register`. There are two ways to write one.
+
+**With `#[rig_tool]` (quickest).** rig's attribute macro turns a function into a tool and generates the arguments struct, the JSON schema and the `PortableTool` impl. `tests/rig_tool_macro.rs` checks it against `ToolRegistry` and `AgentLoop`.
+
+```rust
+use rig_core::{rig_tool, tool::ToolExecutionError};
+
+#[rig_tool(
+    description = "Multiply two integers",
+    params(a = "Left factor", b = "Right factor")
+)]
+fn multiply(a: i64, b: i64) -> Result<i64, ToolExecutionError> {
+    a.checked_mul(b).ok_or_else(|| ToolExecutionError::other("overflow"))
+}
+
+registry.register(Multiply)?;   // struct named after the function, in PascalCase
+```
+
+- **Add `rig-core` as a direct dependency**, at the same version as the harness (`rig-core = "0.42"`). The macro finds the rig crate through the calling crate's own `Cargo.toml`, so the `agent_harness::rig_core` re-export alone fails with ``cannot find `rig_core` in the crate root``.
+- `async fn` works too. `name = "..."` overrides the tool name.
+- Non-`Option` parameters are required and `Option<T>` parameters are optional; `required(...)` overrides this.
+- A `String` return value reaches the model as text; any other `Serialize` type reaches it as JSON.
+
+**By hand (full control).** Implement `PortableTool` yourself when you need a custom schema, an output struct or a `map_error` that shows the model specific error text:
 
 ```rust
 use agent_harness::rig_core::tool::{PortableTool, ToolExecutionError};
@@ -591,7 +616,7 @@ The compiler's exhaustiveness checks point out any place you missed. Then add th
 
 ## Testing
 
-All tests are unit tests next to each module; none calls a live provider API.
+Unit tests sit next to each module, plus one integration test in `tests/`; none calls a live provider API.
 
 - **`harness::agent`**: the loop against rig's `MockCompletionModel` (plain answers, tool round trips matching each result to its call id, tool errors fed back, denied calls not executed, `max_turns`, runtime errors, conversation across runs, model switching keeping conversation and tools), rollback of the conversation on every error path, and a scripted `ChatRuntime` with no rig model behind it to prove the loop is generic.
 - **`harness::runtime`**: `Echo` through a generic caller and `tokio::spawn`; `HostedProviderRuntime` request shape for `prompt_agent` and `chat` (history and tools passed through), structured tool calls, tool-only replies rejected by `prompt_agent`, `AssistantTurn` helpers, error propagation, model switching.
@@ -599,6 +624,7 @@ All tests are unit tests next to each module; none calls a live provider API.
 - **`harness::memory`**: learn/recall/forget, shared clones, concurrent writers from tasks, recovery from a poisoned lock, sorted rendering, manifest ingestion, and compaction (normalisation, multi-byte truncation, deterministic eviction, no-op within budget).
 - **`models`**: JSON round trips, override order, `value_text`, defaults.
 - **Other modules**: validation, registry, tools, policies, provider/spec parsing.
+- **`tests/rig_tool_macro.rs`** (integration, public API only): tools written with `#[rig_tool]` (sync, `async fn`, custom name) register, produce correct definitions and schemas, pass the registry's argument validation and error mapping, and run end to end in `AgentLoop` with the same toolset offered on every turn.
 - **Compile-time bound checks** assert `Send + Sync + 'static` on runtimes, `AgentLoop`, `Conversation`, memory, schemas, `ProviderModel` and policies.
 
 ## Limitations
