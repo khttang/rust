@@ -2,16 +2,17 @@
 
 A modular, type-safe, model-agnostic agent harness in Rust, built on [`rig-core`](https://crates.io/crates/rig-core) 0.42.
 
-Execution code talks to one small trait, `ModelRuntime`, and never to a provider directly. Swapping between Anthropic, OpenAI, Gemini, Ollama and OpenRouter (or a mock in tests) is a change of type parameter or a runtime `/model` command, not a change of calling code. Learned environment facts live in a shared, schema-less `AdaptiveMemoryLayer` that can be compacted for small local models. The crate ships a library (`agent_harness`) and an interactive CLI (`agent-harness`).
+Execution code talks to two small traits, `ModelRuntime` (one prompt, text out) and `ChatRuntime` (a conversation plus tools, one structured turn out), and never to a provider directly. Swapping between Anthropic, OpenAI, Gemini, Ollama and OpenRouter (or a mock in tests) is a change of type parameter or a runtime `/model` command, not a change of calling code. `AgentLoop` drives multi-turn, tool-calling runs with a human-in-the-loop approval gate. Learned environment facts live in a shared, schema-less `AdaptiveMemoryLayer` that can be compacted for small local models. The crate ships a library (`agent_harness`) and an interactive CLI (`agent-harness`).
 
 - [Architecture](#architecture)
   - [Design principles](#design-principles)
   - [Module map](#module-map)
-  - [ModelRuntime](#modelruntime)
+  - [Runtimes](#runtimes)
+  - [The agent loop](#the-agent-loop)
   - [AdaptiveMemoryLayer](#adaptivememorylayer)
   - [Data schemas](#data-schemas)
   - [Provider layer](#provider-layer)
-  - [Tool components](#tool-components)
+  - [Tool pipeline](#tool-pipeline)
 - [Security model](#security-model)
 - [User guide](#user-guide)
   - [Requirements](#requirements)
@@ -33,24 +34,28 @@ Execution code talks to one small trait, `ModelRuntime`, and never to a provider
 
 | Principle | How it shows up |
 |---|---|
-| **Trait-driven separation** | Model access is the `ModelRuntime` trait; tools, approval and observation are each their own trait. |
-| **Static dispatch by default** | `HostedProviderRuntime<M>` is generic over the rig model. Runtime provider switching uses a closed `enum` (`ProviderModel`), not `dyn`. |
-| **`Send` futures** | `ModelRuntime::prompt_agent` returns `impl Future + Send`, so any runtime can be driven from `tokio::spawn`. Implementors still write plain `async fn`. |
-| **Deterministic execution** | Memory renders sorted by key; compaction depends only on contents and policy, never on `HashMap` order. |
+| **Trait-driven separation** | Model access is `ModelRuntime` / `ChatRuntime`; tools, approval and observation are each their own trait. |
+| **Static dispatch by default** | `AgentLoop<R, P, O>` is generic over runtime, policy and observer; `HostedProviderRuntime<M>` over the rig model. Runtime provider switching uses a closed `enum` (`ProviderModel`), not `dyn`. The only type erasure is the tool registry. |
+| **`Send` futures** | Both runtime traits return `impl Future + Send`, so any runtime can be driven from `tokio::spawn`. Implementors still write plain `async fn`. |
+| **Deterministic execution** | Tool calls run sequentially in the order requested; memory renders sorted by key; compaction never depends on `HashMap` order. |
+| **Human-in-the-loop** | Every tool call passes an `ApprovalPolicy` before it runs. The CLI asks the operator by default. |
+| **Failures are feedback** | Unknown tools, bad arguments, tool errors and denials go back to the model as tool results. Only runtime-level failures abort a run, and then the conversation is rolled back. |
 | **No secrets in code** | Credentials are read only from environment variables, via rig's `ProviderClient::from_env`. |
-| **Thread safety** | Runtimes, `AdaptiveMemoryLayer`, `ProviderModel`, schemas and built-in policies are `Send + Sync + 'static`, and tests assert it. |
+| **Thread safety** | Runtimes, `AgentLoop`, `Conversation`, `AdaptiveMemoryLayer`, `ProviderModel`, schemas and built-in policies are `Send + Sync + 'static`, and tests assert it. |
 | **Defense in depth** | The process is designed to run inside an NVIDIA OpenShell sandbox with an independent BlueField-4 Sentry monitor on the egress path. See [Security model](#security-model). |
 
 ### Module map
 
 ```
 src/
-├── main.rs              CLI driver loop: REPL, model switching, memory commands
+├── main.rs              CLI: REPL over AgentLoop, console approval, model switching, memory commands
 ├── lib.rs               Public API and re-exports (including `rig_core`)
 ├── models.rs            AgentTask, ManifestEntry, Manifest: provider-agnostic schemas
 ├── harness/
 │   ├── mod.rs           Harness exports
-│   ├── runtime.rs       ModelRuntime trait, HostedProviderRuntime<M>
+│   ├── runtime.rs       ModelRuntime, ChatRuntime, AssistantTurn, HostedProviderRuntime<M>
+│   ├── agent.rs         AgentLoop<R, P, O>, RunOutcome: the tool-calling loop
+│   ├── conversation.rs  Conversation: multi-turn message history
 │   └── memory.rs        AdaptiveMemoryLayer, CompactionPolicy, CompactionReport
 ├── provider.rs          Provider, ModelSpec, ProviderModel: runtime provider/model selection
 ├── tool.rs              DynTool (object-safe tool) and ToolRegistry
@@ -70,8 +75,12 @@ providers/openai.yaml    OpenShell provider profile: OpenAI key injection, pinne
 
 ```mermaid
 flowchart LR
-    CLI["main.rs (driver loop)"] -->|"prompt_agent(preamble, payload)"| RT["ModelRuntime"]
-    RT -.impl.- HPR["HostedProviderRuntime&lt;M&gt;"]
+    CLI["main.rs (REPL)"] -->|"run(preamble, &mut Conversation, prompt)"| AL["AgentLoop&lt;R, P, O&gt;"]
+    AL -->|"R: ChatRuntime"| HPR["HostedProviderRuntime&lt;M&gt;"]
+    AL -->|"P: ApprovalPolicy"| POL["AutoApprove / AllowList / ConsoleApproval"]
+    AL -->|"O: Observer"| OBS["NoopObserver / StderrObserver"]
+    AL --> REG["ToolRegistry → validate_args → DynTool"]
+    HPR -.also impl.- MR["ModelRuntime (single-shot)"]
     HPR -->|"M: CompletionModel"| PM["ProviderModel"]
     PM --> A[anthropic]
     PM --> OA[openai]
@@ -80,24 +89,26 @@ flowchart LR
     PM --> OR[openrouter]
     CLI -->|"learn / render / compact"| MEM["AdaptiveMemoryLayer<br/>Arc&lt;RwLock&lt;HashMap&gt;&gt;"]
     MEM -->|"learn_manifest"| MAN["Manifest / ManifestEntry"]
-    CLI --> TASK["AgentTask"]
 ```
 
-### ModelRuntime
+### Runtimes
 
 ```rust
 pub trait ModelRuntime: Send + Sync {
-    fn prompt_agent(
-        &self,
-        preamble: &str,
-        payload: &str,
-    ) -> impl Future<Output = Result<String, anyhow::Error>> + Send;
+    fn prompt_agent(&self, preamble: &str, payload: &str)
+        -> impl Future<Output = Result<String, anyhow::Error>> + Send;
+}
+
+pub trait ChatRuntime: Send + Sync {
+    fn chat(&self, preamble: &str, history: &[Message], tools: &[ToolDefinition])
+        -> impl Future<Output = Result<AssistantTurn, anyhow::Error>> + Send;
 }
 ```
 
-The only contract between execution code and a model. One call sends system instructions (`preamble`) and a request (`payload`) and returns the model's text.
+- **`ModelRuntime`** is the single-shot contract: system instructions plus one request in, the model's text out.
+- **`ChatRuntime`** is the multi-turn, tool-aware contract. It receives the whole history (rig's provider-neutral `Message`, so a history built on one model replays on another) and the tool definitions to advertise, and returns one **`AssistantTurn`**: `content` (text, tool calls and reasoning, in order), `message_id` and `usage`. Helpers: `text()`, `tool_calls()`, `into_message()` (keeps every part unchanged so provider ids and signatures round-trip), and `text_reply()` for scripted runtimes.
 
-**`HostedProviderRuntime<M: CompletionModel>`** is the built-in implementation for any rig model:
+**`HostedProviderRuntime<M: CompletionModel>`** implements both for any rig model:
 
 | Method | Effect |
 |---|---|
@@ -105,7 +116,57 @@ The only contract between execution code and a model. One call sends system inst
 | `with_max_tokens(n)`, `with_temperature(t)` | Builder-style request settings. |
 | `model()`, `set_model(new)` | Inspect or replace the model; `set_model` returns the old one. |
 
-Per call it builds a `CompletionRequest` with a leading `Message::system(preamble)` (omitted when empty) and `Message::user(payload)`, no tools, runs `validate_message_content()`, and joins the text parts of the response with newlines. A response with no text is an error; provider failures are wrapped with `"completion request failed"` context.
+`chat` builds a `CompletionRequest` with a leading `Message::system(preamble)` (omitted when empty), the history and the tool definitions, runs `validate_message_content()`, and wraps provider failures with `"completion request failed"` context. `prompt_agent` is `chat` with a one-message history and no tools; a reply with no text is an error.
+
+### The agent loop
+
+`AgentLoop<R: ChatRuntime, P: ApprovalPolicy = AutoApprove, O: Observer = NoopObserver>` owns the runtime, a `ToolRegistry`, the policy, the observer and `max_turns` (default `DEFAULT_MAX_TURNS` = 8). It does **not** own conversation state: a `Conversation` is passed to `run` by `&mut`, so one loop can serve many conversations and a conversation survives a model switch (`runtime_mut().set_model(...)`).
+
+```rust
+let agent = AgentLoop::new(runtime, tools)        // AutoApprove, NoopObserver
+    .with_policy(AllowList::new(["calculator"]))
+    .with_observer(my_observer)
+    .with_max_turns(6);
+let outcome = agent.run(preamble, &mut conversation, "What is 17 * 23?").await?;
+```
+
+`run(preamble, &mut conversation, prompt)`:
+
+```mermaid
+sequenceDiagram
+    participant C as Caller
+    participant L as AgentLoop
+    participant R as ChatRuntime
+    participant P as ApprovalPolicy
+    participant T as ToolRegistry
+    C->>L: run(preamble, conversation, prompt)
+    L->>L: conversation.push(user prompt)
+    loop turn = 1..=max_turns
+        L->>R: chat(preamble, history, tool definitions)
+        R-->>L: AssistantTurn
+        L->>L: conversation.push(assistant turn)
+        alt no tool calls
+            L-->>C: RunOutcome { output, turns, tool_calls, usage }
+        else tool calls
+            loop each call, in order
+                L->>P: review(call)
+                alt Approved
+                    L->>T: execute(name, args)
+                else Denied
+                    L->>L: refused error with the reason
+                end
+            end
+            L->>L: conversation.push(user message with all tool results)
+        end
+    end
+    L-->>C: Err(MaxTurnsExceeded)
+```
+
+- **Tool results** carry the original call's `id` and `provider` identifiers, so every provider can match result to call. All results from one turn go into one user message.
+- **Errors.** `HarnessError::Runtime` (the model call failed), `EmptyResponse` (no content) and `MaxTurnsExceeded(n)` abort the run. On any error the conversation is **rolled back** to its state before the call, so a failed run never leaves a half-finished turn in the history. Tool problems are never errors; they become tool results.
+- **Observer hooks:** `on_turn_start`, `on_model_response` (with the `AssistantTurn`), `on_tool_call` (with the approval decision), `on_tool_result`, `on_final_answer`.
+
+`Conversation` is a plain ordered `Vec<Message>` with `messages`, `push`, `len`, `clear` and `truncate`. It is unbounded. If you trim it, never separate an assistant tool-call message from the user message holding its results; providers reject orphaned calls or results.
 
 ### AdaptiveMemoryLayer
 
@@ -158,18 +219,34 @@ Memory is **process-local and not persisted**. It is lost when the process exits
 
 `ProviderError` covers `UnknownProvider`, `ModelRequired` and `Client { provider, source }` (for example a missing API key).
 
-### Tool components
+### Tool pipeline
 
-These library components are kept and tested, but **no driver loop currently uses them**: `ModelRuntime` sends no tool definitions.
+```
+model's ToolCall { name, arguments: serde_json::Value }
+        │
+        ▼
+ApprovalPolicy::review ──Denied──► ToolExecutionError::refused("tool call denied: …")
+        │ Approved
+        ▼
+ToolRegistry::execute
+  ├─ lookup by name ─────────────► not_found("unknown tool `x`")
+  ├─ validate_args(schema, args) ► invalid_args("missing required argument `a`")
+  ├─ serde_json::from_value::<Args> ► invalid_args(serde message)
+  └─ PortableTool::call(args) ──► ToolOutput, or map_error(e)
+        │
+        ▼
+ToolResult content sent back to the model
+```
 
 | Component | Purpose |
 |---|---|
-| `ToolRegistry` | `register` (duplicate names → `HarnessError::DuplicateTool`), `definitions`, and `execute(name, args)` which looks up, validates and runs a tool. |
-| `DynTool` | Object-safe wrapper; every rig `PortableTool` gets it via a blanket impl. |
+| `ToolRegistry` | `register` (duplicate names → `HarnessError::DuplicateTool`), `definitions` (sent every turn, in registration order), and `execute(name, args)`. |
+| `DynTool` | Object-safe wrapper; every rig `PortableTool` gets it via a blanket impl. One `Box` per tool, one boxed future per call. |
 | `validate_args` | Deterministic subset of JSON Schema: `type: object`, `required`, and primitive property types. Serde is the final gate. |
-| `ApprovalPolicy` | Async human-in-the-loop gate; `AutoApprove`, `AllowList`. |
-| `Observer` | Synchronous lifecycle hooks; `NoopObserver`. |
-| `tools::Calculator`, `tools::WordCount` | Example tools. |
+| `ApprovalPolicy` | Async gate: `AutoApprove`, `AllowList`; the CLI's `ConsoleApproval` asks the operator. |
+| `tools::Calculator`, `tools::WordCount` | Example tools, registered in the CLI. |
+
+`ToolExecutionError::model_output()` decides what the model sees. rig's default `map_error` sends only safe, kind-level feedback; override it (as `Calculator` does) when the error text is safe and useful to show the model.
 
 ---
 
@@ -235,7 +312,7 @@ cargo clippy --all-targets
 agent-harness [-m|--model <provider[:model]>] [prompt…]
 ```
 
-With a prompt it runs once and exits. Without one it starts an interactive REPL. Each prompt is a **single, independent request**: the base preamble plus everything in memory, then your text. Earlier prompts and answers are not resent.
+With a prompt it runs once and exits. Without one it starts an interactive REPL. Each prompt runs through `AgentLoop` with the `calculator` and `word_count` tools and **continues the current conversation**; the preamble is the base prompt plus everything in memory. Before each tool call you are asked to approve it (`y`); anything else denies it and the model is told `tool call denied: operator rejected the call`.
 
 **Choosing the model** (first match wins):
 
@@ -250,6 +327,7 @@ With a prompt it runs once and exits. Without one it starts an interactive REPL.
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` | Provider credentials; only the selected provider's key is needed |
 | `OLLAMA_API_BASE_URL` | Ollama server URL (optional) |
 | `HARNESS_MODEL` | Default model spec |
+| `HARNESS_AUTO_APPROVE=1` | Skip the per-tool-call approval prompt (trusted tools only) |
 
 Keep keys in your shell environment or a git-ignored `.env` that you `source`. Never commit them.
 
@@ -258,9 +336,12 @@ Keep keys in your shell environment or a git-ignored `.env` that you `source`. N
 ```sh
 export ANTHROPIC_API_KEY=...            # set in your shell, never in code
 
-cargo run -- "Summarise the borrow checker in one sentence."
-cargo run -- -m openai:gpt-5.5 "hello"
+cargo run -- "What is 1234 * 5678?"
+cargo run -- -m openai:gpt-5.5 "Count the words in 'the quick brown fox'"
 cargo run -- --model=ollama:llama3.2:3b "hello"
+
+# Non-interactive tool approval (trusted tools only)
+HARNESS_AUTO_APPROVE=1 cargo run -- -m gemini "What is 2^10 via repeated multiplication?"
 ```
 
 **REPL commands:**
@@ -268,27 +349,37 @@ cargo run -- --model=ollama:llama3.2:3b "hello"
 | Command | Effect |
 |---|---|
 | `/model` | Show the active model |
-| `/model <spec>` | Switch provider/model. On error the current model stays. |
+| `/model <spec>` | Switch provider/model and keep the conversation. On error the current model stays. |
 | `/providers` | List providers, default models, and whether each API key is set |
 | `/learn <key> <value>` | Store a heuristic; it is added to every later preamble |
 | `/forget <key>` | Remove a heuristic |
 | `/memory` | Print memory, sorted by key |
 | `/compact` | Compact memory with `CompactionPolicy::SMALL_MODEL` and print the report |
 | `/clear` | Clear memory |
+| `/reset` | Start a new conversation (memory is kept) |
 | `/quit`, `/exit`, Ctrl-D | Exit |
 
-Example session (stderr diagnostics are prefixed with `[`):
+Example session (diagnostics go to stderr):
 
 ```text
-model: ollama:llama3.2 (/model <provider[:model]> to switch)
+model: anthropic:claude-sonnet-5 (/model <provider[:model]> to switch)
 
-> /learn shell zsh on macOS
-learned `shell`
+> what is 12.5 * 8?
+[turn 1]
+  model requested 1 tool call(s)
 
-> how do I list hidden files?
-ls -a
-[ollama:llama3.2]
+[approve] calculator({"a":12.5,"b":8,"op":"mul"}) ? [y/N] y
+  -> calculator Approved
+  <- calculator: {"result":100.0}
+[turn 2]
+12.5 × 8 = 100
+[anthropic:claude-sonnet-5 | 2 turn(s), 1 tool call(s), 812 tokens]
+
+> and divided by 4?
+...
 ```
+
+Tool calling needs a model that returns **structured** tool calls. Some local models emit the call as plain JSON text instead, even when Ollama lists `tools` among their capabilities (observed with `qwen2.5-coder:32b`); the loop then treats that text as the final answer.
 
 ### Bounded launch
 
@@ -330,43 +421,57 @@ agent-harness = { path = "../agent-harness" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
+A tool-calling, multi-turn run:
+
 ```rust
 use agent_harness::{
-    AdaptiveMemoryLayer, CompactionPolicy, HostedProviderRuntime, ManifestEntry, ModelRuntime,
-    ProviderModel,
+    AdaptiveMemoryLayer, AgentLoop, AllowList, CompactionPolicy, Conversation,
+    HostedProviderRuntime, ManifestEntry, ProviderModel, ToolRegistry,
+    tools::{Calculator, WordCount},
 };
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let model = ProviderModel::from_env("anthropic:claude-sonnet-5".parse()?)?;
-    let mut runtime = HostedProviderRuntime::new(model).with_max_tokens(1024);
+    let mut tools = ToolRegistry::new();
+    tools.register(Calculator)?;
+    tools.register(WordCount)?;
+
+    let mut agent = AgentLoop::new(HostedProviderRuntime::new(model), tools)
+        .with_policy(AllowList::new(["calculator"])) // word_count calls will be denied
+        .with_max_turns(6);
 
     let memory = AdaptiveMemoryLayer::new();
-    memory.learn_manifest(&[
-        ManifestEntry::new("os", "linux"),
-        ManifestEntry::new("cores", 8),
-    ]);
-
+    memory.learn_manifest(&[ManifestEntry::new("os", "linux"), ManifestEntry::new("cores", 8)]);
     let preamble = format!("Be concise.\n\nEnvironment:\n{}", memory.render());
-    println!("{}", runtime.prompt_agent(&preamble, "Suggest a -j value for make.").await?);
 
-    // Switch to a small local model; compact memory to fit its context first.
-    runtime.set_model(ProviderModel::from_env("ollama:llama3.2:3b".parse()?)?);
+    let mut conversation = Conversation::new();
+    let outcome = agent.run(&preamble, &mut conversation, "What is 17 * 23?").await?;
+    println!("{} ({} turns, {} tokens)", outcome.output, outcome.turns, outcome.usage.total_tokens);
+
+    // Switch to a small local model mid-conversation; compact memory first.
+    agent.runtime_mut().set_model(ProviderModel::from_env("ollama:llama3.2:3b".parse()?)?);
     memory.compact(CompactionPolicy::SMALL_MODEL);
     let preamble = format!("Be concise.\n\nEnvironment:\n{}", memory.render());
-    println!("{}", runtime.prompt_agent(&preamble, "Same question.").await?);
+    let outcome = agent.run(&preamble, &mut conversation, "Now add 9 to that.").await?;
+    println!("{}", outcome.output);
     Ok(())
 }
 ```
+
+For a single prompt with no tools or history, `HostedProviderRuntime` also implements `ModelRuntime`: `runtime.prompt_agent(preamble, "question").await?`.
 
 Any rig `CompletionModel` works in place of `ProviderModel`, including a concrete provider model for fully static dispatch, or `rig_core::test_utils::MockCompletionModel` in tests (dev feature `test-utils`).
 
 ### Writing a runtime
 
-Code generic over `R: ModelRuntime` works with every backend. Implement it directly for anything that isn't a rig model, such as a scripted stub:
+Code generic over `R: ModelRuntime` or `R: ChatRuntime` works with every backend. Implement them directly for anything that isn't a rig model, such as a scripted stub for tests:
 
 ```rust
-use agent_harness::ModelRuntime;
+use agent_harness::{
+    AgentLoop, AssistantTurn, ChatRuntime, ModelRuntime, ToolRegistry,
+    rig_core::{completion::ToolDefinition, message::Message},
+};
 
 struct Echo;
 
@@ -376,8 +481,23 @@ impl ModelRuntime for Echo {
     }
 }
 
+impl ChatRuntime for Echo {
+    async fn chat(
+        &self,
+        _preamble: &str,
+        history: &[Message],
+        _tools: &[ToolDefinition],
+    ) -> anyhow::Result<AssistantTurn> {
+        Ok(AssistantTurn::text_reply(format!("{} message(s) so far", history.len())))
+    }
+}
+
 async fn run_on<R: ModelRuntime>(runtime: &R) -> anyhow::Result<String> {
     runtime.prompt_agent("sys", "hi").await
+}
+
+fn scripted_agent() -> AgentLoop<Echo> {
+    AgentLoop::new(Echo, ToolRegistry::new())
 }
 ```
 
@@ -453,18 +573,20 @@ The compiler's exhaustiveness checks point out any place you missed. Then add th
 
 All tests are unit tests next to each module; none calls a live provider API.
 
-- **`harness::runtime`**: a dummy `Echo` runtime through a generic caller and through `tokio::spawn`; `HostedProviderRuntime` against rig's `MockCompletionModel` (request shape, empty preamble, error propagation, model switching).
+- **`harness::agent`**: the loop against rig's `MockCompletionModel` (plain answers, tool round trips matching each result to its call id, tool errors fed back, denied calls not executed, `max_turns`, runtime errors, conversation across runs, model switching keeping conversation and tools), rollback of the conversation on every error path, and a scripted `ChatRuntime` with no rig model behind it to prove the loop is generic.
+- **`harness::runtime`**: `Echo` through a generic caller and `tokio::spawn`; `HostedProviderRuntime` request shape for `prompt_agent` and `chat` (history and tools passed through), structured tool calls, tool-only replies rejected by `prompt_agent`, `AssistantTurn` helpers, error propagation, model switching.
+- **`harness::conversation`**: push, truncate, clear.
 - **`harness::memory`**: learn/recall/forget, shared clones, concurrent writers from tasks, recovery from a poisoned lock, sorted rendering, manifest ingestion, and compaction (normalisation, multi-byte truncation, deterministic eviction, no-op within budget).
 - **`models`**: JSON round trips, override order, `value_text`, defaults.
-- **Retained modules**: validation, registry, tools, policies, provider/spec parsing.
-- **Compile-time bound checks** assert `Send + Sync + 'static` on runtimes, memory, schemas, `ProviderModel` and policies.
+- **Other modules**: validation, registry, tools, policies, provider/spec parsing.
+- **Compile-time bound checks** assert `Send + Sync + 'static` on runtimes, `AgentLoop`, `Conversation`, memory, schemas, `ProviderModel` and policies.
 
 ## Limitations
 
-- **No conversation history.** Each `prompt_agent` call is independent; only memory carries context between prompts.
-- **No tool calling.** `ModelRuntime` sends no tools; the tool, policy and observer modules are not wired into any loop.
+- **Unbounded conversation.** Every turn is resent. There is no windowing or summarisation yet; `/reset` starts over.
+- **Model support for tools varies.** The loop needs structured tool calls; some local models emit them as plain text.
 - **Memory is not persisted** and is lost on exit. Compaction eviction is permanent within the process.
-- **Non-streaming.** `ProviderModel` forwards `stream()`, but `ModelRuntime` has no streaming method.
-- **Vestigial error variants.** `HarnessError::{Completion, MaxTurnsExceeded, EmptyResponse}` are no longer produced; only `DuplicateTool` is (from `ToolRegistry::register`).
+- **Non-streaming.** `ProviderModel` forwards `stream()`, but neither runtime trait has a streaming method.
+- **Sequential tools.** Tool calls within a turn run one at a time, trading latency for deterministic side effects.
 - **Sandbox policy is a draft.** See [Security model](#security-model).
 - **Model defaults may go stale.** Override them with an explicit `provider:model` spec.

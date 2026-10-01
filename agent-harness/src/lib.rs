@@ -22,7 +22,8 @@ pub mod validate;
 
 pub use error::HarnessError;
 pub use harness::{
-    AdaptiveMemoryLayer, CompactionPolicy, CompactionReport, HostedProviderRuntime, ModelRuntime,
+    AdaptiveMemoryLayer, AgentLoop, AssistantTurn, ChatRuntime, CompactionPolicy, CompactionReport,
+    Conversation, HostedProviderRuntime, ModelRuntime, RunOutcome,
 };
 pub use models::{AgentTask, Manifest, ManifestEntry};
 pub use observer::{NoopObserver, Observer};

@@ -6,28 +6,86 @@
 //! Model selection (first match wins): `--model`, `HARNESS_MODEL`, `anthropic`.
 //! Specs look like `anthropic:claude-sonnet-5`, `openai`, `ollama:llama3.2:3b`.
 //!
-//! Provider credentials are read by rig from `ANTHROPIC_API_KEY`,
-//! `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`;
-//! `OLLAMA_API_BASE_URL` is optional.
+//! Environment:
+//! * Provider credentials, read by rig: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+//!   `GEMINI_API_KEY`, `OPENROUTER_API_KEY`; `OLLAMA_API_BASE_URL` (optional).
+//! * `HARNESS_AUTO_APPROVE=1`: skip the interactive tool-approval prompt.
 //!
-//! Learned heuristics are appended to the preamble of every prompt. For local
-//! (Ollama) models memory is compacted with [`CompactionPolicy::SMALL_MODEL`]
-//! before each prompt.
+//! Each prompt runs through the tool-calling [`AgentLoop`] and continues the
+//! current conversation. Learned heuristics are appended to the preamble of
+//! every prompt. For local (Ollama) models memory is compacted with
+//! [`CompactionPolicy::SMALL_MODEL`] before each prompt.
 //!
 //! REPL commands: `/model [spec]`, `/providers`, `/learn <key> <value>`,
-//! `/forget <key>`, `/memory`, `/compact`, `/clear`, `/quit`.
+//! `/forget <key>`, `/memory`, `/compact`, `/clear`, `/reset`, `/quit`.
 
 use std::io::{self, BufRead, Write};
 
 use agent_harness::{
-    AdaptiveMemoryLayer, AgentTask, CompactionPolicy, CompactionReport, HostedProviderRuntime,
-    ModelRuntime, ModelSpec, Provider, ProviderModel,
+    AdaptiveMemoryLayer, AgentLoop, AgentTask, Approval, ApprovalPolicy, AssistantTurn,
+    CompactionPolicy, CompactionReport, Conversation, HostedProviderRuntime, ModelSpec, Observer,
+    Provider, ProviderModel, ToolRegistry,
+    rig_core::{
+        message::ToolCall,
+        tool::{ToolExecutionError, ToolOutput},
+    },
+    tools::{Calculator, WordCount},
 };
 
 type Runtime = HostedProviderRuntime<ProviderModel>;
+type CliAgent = AgentLoop<Runtime, ConsoleApproval, StderrObserver>;
 
 const DEFAULT_SPEC: &str = "anthropic";
-const PREAMBLE: &str = "You are a helpful assistant. Be concise.";
+const PREAMBLE: &str = "You are a helpful assistant. Use the provided tools when they help \
+                        you answer accurately. Be concise.";
+
+/// Asks the operator on the terminal before each tool call.
+struct ConsoleApproval {
+    auto_approve: bool,
+}
+
+impl ApprovalPolicy for ConsoleApproval {
+    async fn review(&self, call: &ToolCall) -> Approval {
+        if self.auto_approve {
+            return Approval::Approved;
+        }
+        let prompt = format!(
+            "\n[approve] {}({}) ? [y/N] ",
+            call.function.name, call.function.arguments
+        );
+        match tokio::task::spawn_blocking(move || read_line(&prompt)).await {
+            Ok(Ok(Some(answer))) if answer.trim().eq_ignore_ascii_case("y") => Approval::Approved,
+            _ => Approval::deny("operator rejected the call"),
+        }
+    }
+}
+
+/// Logs lifecycle events to stderr.
+struct StderrObserver;
+
+impl Observer for StderrObserver {
+    fn on_turn_start(&self, turn: usize) {
+        eprintln!("[turn {turn}]");
+    }
+
+    fn on_model_response(&self, _turn: usize, response: &AssistantTurn) {
+        let calls = response.tool_calls().count();
+        if calls > 0 {
+            eprintln!("  model requested {calls} tool call(s)");
+        }
+    }
+
+    fn on_tool_call(&self, call: &ToolCall, approval: &Approval) {
+        eprintln!("  -> {} {:?}", call.function.name, approval);
+    }
+
+    fn on_tool_result(&self, call: &ToolCall, result: &Result<ToolOutput, ToolExecutionError>) {
+        match result {
+            Ok(out) => eprintln!("  <- {}: {}", call.function.name, out.render()),
+            Err(e) => eprintln!("  <- {} failed: {e}", call.function.name),
+        }
+    }
+}
 
 /// Prints `prompt` to stderr and reads one line from stdin. `None` on EOF.
 fn read_line(prompt: &str) -> io::Result<Option<String>> {
@@ -60,20 +118,29 @@ fn report_compaction(report: CompactionReport) {
     );
 }
 
-async fn run_prompt(runtime: &Runtime, memory: &AdaptiveMemoryLayer, payload: String) {
-    if runtime.model().spec().provider == Provider::Ollama {
+async fn run_prompt(
+    agent: &CliAgent,
+    memory: &AdaptiveMemoryLayer,
+    conversation: &mut Conversation,
+    payload: String,
+) {
+    let spec = agent.runtime().model().spec();
+    if spec.provider == Provider::Ollama {
         let report = memory.compact(CompactionPolicy::SMALL_MODEL);
         if report.changed() {
             report_compaction(report);
         }
     }
     let task = build_task(memory, payload);
-    match runtime.prompt_agent(&task.preamble, &task.payload).await {
-        Ok(answer) => {
-            println!("{answer}");
-            eprintln!("[{}]", runtime.model().spec());
+    match agent.run(&task.preamble, conversation, task.payload).await {
+        Ok(outcome) => {
+            println!("{}", outcome.output);
+            eprintln!(
+                "[{spec} | {} turn(s), {} tool call(s), {} tokens]",
+                outcome.turns, outcome.tool_calls, outcome.usage.total_tokens
+            );
         }
-        Err(e) => eprintln!("error: {e:#}"),
+        Err(e) => eprintln!("error: {e}"),
     }
 }
 
@@ -83,8 +150,9 @@ fn load_model(spec: &str) -> Result<ProviderModel, Box<dyn std::error::Error>> {
 }
 
 /// `/model [spec]`: show the active model, or switch to a new one. On failure
-/// the current model stays active.
-fn switch_model(runtime: &mut Runtime, arg: &str) {
+/// the current model stays active. The conversation carries over.
+fn switch_model(agent: &mut CliAgent, arg: &str) {
+    let runtime = agent.runtime_mut();
     if arg.is_empty() {
         eprintln!("active model: {}", runtime.model().spec());
         return;
@@ -137,18 +205,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let spec = cli_spec
         .or_else(|| std::env::var("HARNESS_MODEL").ok())
         .unwrap_or_else(|| DEFAULT_SPEC.to_owned());
+    let auto_approve = std::env::var("HARNESS_AUTO_APPROVE").is_ok_and(|v| v == "1");
 
-    let mut runtime = HostedProviderRuntime::new(load_model(&spec)?);
+    let mut tools = ToolRegistry::new();
+    tools.register(Calculator)?;
+    tools.register(WordCount)?;
+    let mut agent = AgentLoop::new(HostedProviderRuntime::new(load_model(&spec)?), tools)
+        .with_policy(ConsoleApproval { auto_approve })
+        .with_observer(StderrObserver);
     let memory = AdaptiveMemoryLayer::new();
+    let mut conversation = Conversation::new();
 
     if !prompt_args.is_empty() {
-        run_prompt(&runtime, &memory, prompt_args.join(" ")).await;
+        run_prompt(&agent, &memory, &mut conversation, prompt_args.join(" ")).await;
         return Ok(());
     }
 
     eprintln!(
         "model: {} (/model <provider[:model]> to switch)",
-        runtime.model().spec()
+        agent.runtime().model().spec()
     );
     loop {
         let line = tokio::task::spawn_blocking(|| read_line("\n> ")).await??;
@@ -159,7 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match command {
             "" => continue,
             "/quit" | "/exit" => break,
-            "/model" => switch_model(&mut runtime, arg),
+            "/model" => switch_model(&mut agent, arg),
             "/providers" => list_providers(),
             "/learn" => match arg.split_once(' ') {
                 Some((key, value)) => {
@@ -178,7 +253,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 memory.clear();
                 eprintln!("memory cleared");
             }
-            _ => run_prompt(&runtime, &memory, line.to_owned()).await,
+            "/reset" => {
+                conversation.clear();
+                eprintln!("conversation reset");
+            }
+            _ => run_prompt(&agent, &memory, &mut conversation, line.to_owned()).await,
         }
     }
     Ok(())
