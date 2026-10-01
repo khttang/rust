@@ -135,9 +135,13 @@ async fn run_prompt(
     match agent.run(&task.preamble, conversation, task.payload).await {
         Ok(outcome) => {
             println!("{}", outcome.output);
+            let tokens = outcome.usage.total_tokens.map_or_else(
+                || "tokens not reported".to_owned(),
+                |n| format!("{n} tokens"),
+            );
             eprintln!(
-                "[{spec} | {} turn(s), {} tool call(s), {} tokens]",
-                outcome.turns, outcome.tool_calls, outcome.usage.total_tokens
+                "[{spec} | {} turn(s), {} tool call(s), {tokens}]",
+                outcome.turns, outcome.tool_calls
             );
         }
         Err(e) => eprintln!("error: {e}"),

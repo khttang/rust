@@ -76,11 +76,14 @@ impl ApprovalPolicy for AllowList {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig_core::message::ToolFunction;
+    use rig_core::message::{ToolFunction, ToolName};
     use serde_json::json;
 
     fn call(name: &str) -> ToolCall {
-        ToolCall::from_wire("id-1", ToolFunction::new(name.into(), json!({})))
+        ToolCall::from_wire(
+            "id-1",
+            ToolFunction::new(ToolName::new(name).unwrap(), json!({})),
+        )
     }
 
     #[tokio::test]

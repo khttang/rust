@@ -13,8 +13,12 @@ use std::future::Future;
 
 use anyhow::{Context, bail};
 use rig_core::{
-    completion::{AssistantContent, CompletionModel, CompletionRequest, ToolDefinition, Usage},
+    Model, ProviderError,
+    completion::{AssistantContent, CompletionRequest, CompletionResponse, ToolDefinition, Usage},
+    driver::Transport,
     message::{Message, ToolCall},
+    operation::Completion,
+    wire::Wire,
 };
 
 /// A single-shot prompt interface over any model backend.
@@ -65,7 +69,7 @@ impl AssistantTurn {
         Self {
             content: vec![AssistantContent::text(text.into())],
             message_id: None,
-            usage: Usage::new(),
+            usage: Usage::default(),
         }
     }
 
@@ -101,11 +105,37 @@ impl AssistantTurn {
     }
 }
 
+/// A model that answers completion requests.
+///
+/// Implemented for every rig [`Model`] whose wire performs a [`Completion`]
+/// (each provider's `completion(..)` model, and rig's `MockCompletionModel`),
+/// and for [`crate::ProviderModel`]. Calls are statically dispatched.
+pub trait CompletionBackend: Send + Sync {
+    /// Send `request` and return the whole reply.
+    fn complete(
+        &self,
+        request: CompletionRequest,
+    ) -> impl Future<Output = Result<CompletionResponse, ProviderError>> + Send;
+}
+
+impl<W, T> CompletionBackend for Model<W, T>
+where
+    W: Wire<Op = Completion>,
+    T: Transport<W>,
+{
+    fn complete(
+        &self,
+        request: CompletionRequest,
+    ) -> impl Future<Output = Result<CompletionResponse, ProviderError>> + Send {
+        self.call(request)
+    }
+}
+
 /// Default per-request output budget. Always sent, so providers that require
 /// it (e.g. Anthropic) never need a model-specific default.
 pub const DEFAULT_MAX_TOKENS: u64 = 4096;
 
-/// A [`ModelRuntime`] over any rig [`CompletionModel`], such as
+/// A [`ModelRuntime`] over any [`CompletionBackend`], such as
 /// [`crate::ProviderModel`] for runtime-selected hosted providers.
 ///
 /// Statically dispatched: `HostedProviderRuntime<M>` is `Send + Sync + 'static`
@@ -117,7 +147,7 @@ pub struct HostedProviderRuntime<M> {
     temperature: Option<f64>,
 }
 
-impl<M: CompletionModel> HostedProviderRuntime<M> {
+impl<M: CompletionBackend> HostedProviderRuntime<M> {
     pub fn new(model: M) -> Self {
         Self {
             model,
@@ -158,7 +188,6 @@ impl<M: CompletionModel> HostedProviderRuntime<M> {
 
         CompletionRequest {
             model: None,
-            preamble: None,
             chat_history,
             documents: Vec::new(),
             tools: tools.to_vec(),
@@ -172,7 +201,7 @@ impl<M: CompletionModel> HostedProviderRuntime<M> {
     }
 }
 
-impl<M: CompletionModel> ChatRuntime for HostedProviderRuntime<M> {
+impl<M: CompletionBackend> ChatRuntime for HostedProviderRuntime<M> {
     async fn chat(
         &self,
         preamble: &str,
@@ -183,7 +212,7 @@ impl<M: CompletionModel> ChatRuntime for HostedProviderRuntime<M> {
         request.validate_message_content()?;
         let response = self
             .model
-            .completion(request)
+            .complete(request)
             .await
             .context("completion request failed")?;
         Ok(AssistantTurn {
@@ -194,7 +223,7 @@ impl<M: CompletionModel> ChatRuntime for HostedProviderRuntime<M> {
     }
 }
 
-impl<M: CompletionModel> ModelRuntime for HostedProviderRuntime<M> {
+impl<M: CompletionBackend> ModelRuntime for HostedProviderRuntime<M> {
     async fn prompt_agent(&self, preamble: &str, payload: &str) -> Result<String, anyhow::Error> {
         let turn = self.chat(preamble, &[Message::user(payload)], &[]).await?;
         let text = turn.text();
@@ -277,7 +306,7 @@ mod tests {
     #[tokio::test]
     async fn provider_errors_propagate() {
         let runtime =
-            HostedProviderRuntime::new(MockCompletionModel::new([MockTurn::error("boom")]));
+            HostedProviderRuntime::new(MockCompletionModel::from_turns([MockTurn::error("boom")]));
         let err = runtime.prompt_agent("sys", "hi").await.unwrap_err();
         assert!(
             err.to_string().contains("completion request failed"),
@@ -332,7 +361,7 @@ mod tests {
 
     #[tokio::test]
     async fn chat_returns_tool_calls_structured() {
-        let model = MockCompletionModel::new([MockTurn::tool_call(
+        let model = MockCompletionModel::from_turns([MockTurn::tool_call(
             "c1",
             "calculator",
             serde_json::json!({"op": "add", "a": 1, "b": 2}),
@@ -350,7 +379,7 @@ mod tests {
 
     #[tokio::test]
     async fn prompt_agent_rejects_tool_only_reply() {
-        let model = MockCompletionModel::new([MockTurn::tool_call(
+        let model = MockCompletionModel::from_turns([MockTurn::tool_call(
             "c1",
             "calculator",
             serde_json::json!({}),
@@ -367,11 +396,15 @@ mod tests {
         let turn = AssistantTurn {
             content: vec![
                 AssistantContent::text("a"),
-                AssistantContent::tool_call("c1", "t", serde_json::json!({})),
+                AssistantContent::tool_call(
+                    "c1",
+                    rig_core::message::ToolName::new("t").unwrap(),
+                    serde_json::json!({}),
+                ),
                 AssistantContent::text("b"),
             ],
             message_id: Some("msg_1".into()),
-            usage: Usage::new(),
+            usage: Usage::default(),
         };
         assert_eq!(turn.text(), "a\nb");
         assert_eq!(turn.tool_calls().count(), 1);

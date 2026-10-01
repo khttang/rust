@@ -8,7 +8,7 @@ use agent_harness::{
     AgentLoop, AssistantTurn, ChatRuntime, Conversation, DynTool, ToolRegistry,
     rig_core::{
         completion::{AssistantContent, ToolDefinition},
-        message::{Message, ToolResultContent, UserContent},
+        message::{Message, ToolName, ToolResultContent, UserContent},
         rig_tool,
         tool::ToolExecutionError,
     },
@@ -170,12 +170,16 @@ impl ChatRuntime for Scripted {
     }
 }
 
+fn tool(name: &str) -> ToolName {
+    ToolName::new(name).unwrap()
+}
+
 #[tokio::test]
 async fn agent_loop_runs_macro_tools() {
     let mut call = AssistantTurn::text_reply("");
     call.content = vec![
-        AssistantContent::tool_call("c1", "multiply", json!({"a": 3, "b": 4})),
-        AssistantContent::tool_call("c2", "search-docs", json!({"query": "loop"})),
+        AssistantContent::tool_call("c1", tool("multiply"), json!({"a": 3, "b": 4})),
+        AssistantContent::tool_call("c2", tool("search-docs"), json!({"query": "loop"})),
     ];
     let runtime = Scripted {
         turns: Mutex::new([call, AssistantTurn::text_reply("done")].into()),

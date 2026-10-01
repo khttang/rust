@@ -7,7 +7,7 @@
 #
 # Steps:
 #   1. preflight   gateway connected; supervisor can reach it from the docker host
-#   2. build       aarch64/x86_64 linux binary in rust:1.90, then sandbox.Dockerfile
+#   2. build       aarch64/x86_64 linux binary in rust:1.95, then sandbox.Dockerfile
 #   3. policy      the effective policy matches the file (plus gateway baseline)
 #   4. enforce     identity, filesystem and egress probes inside one sandbox
 #   5. provider    credential injection via providers/openai.yaml
@@ -87,9 +87,9 @@ case "$(docker version --format '{{.Server.Arch}}')" in
 esac
 BIN="$ROOT/target/$TRIPLE_DIR/release/agent-harness"
 if [[ $SKIP_BUILD -eq 0 ]]; then
-  log "2/5 build (rust:1.90 -> target/$TRIPLE_DIR, then $IMAGE)"
-  # rust:1.90 is Debian trixie; sandbox.Dockerfile must stay on trixie (glibc).
-  docker run --rm -v "$ROOT":/src -w /src -e CARGO_TARGET_DIR="/src/target/$TRIPLE_DIR" rust:1.90 \
+  log "2/5 build (rust:1.95 -> target/$TRIPLE_DIR, then $IMAGE)"
+  # rust:1.95 is Debian trixie; sandbox.Dockerfile must stay on trixie (glibc).
+  docker run --rm -v "$ROOT":/src -w /src -e CARGO_TARGET_DIR="/src/target/$TRIPLE_DIR" rust:1.95 \
     sh -c 'apt-get -qq update >/dev/null && apt-get -qq install -y cmake >/dev/null 2>&1; cargo build --release --locked --quiet'
   mkdir -p "$ROOT/.sandbox/image"
   cp "$BIN" "$ROOT/.sandbox/image/agent-harness"

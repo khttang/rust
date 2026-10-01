@@ -140,7 +140,7 @@ where
     ) -> Result<RunOutcome, HarnessError> {
         conversation.push(Message::user(prompt));
         let tools = self.tools.definitions();
-        let mut usage = Usage::new();
+        let mut usage = Usage::default();
         let mut tool_calls = 0;
 
         for turn in 1..=self.max_turns {
@@ -191,7 +191,7 @@ where
         let result = match approval {
             Approval::Approved => {
                 self.tools
-                    .execute(&call.function.name, call.function.arguments.clone())
+                    .execute(call.function.name.as_str(), call.function.arguments.clone())
                     .await
             }
             Approval::Denied { reason } => Err(ToolExecutionError::refused(format!(
@@ -204,12 +204,7 @@ where
             Ok(output) => output.into_content(),
             Err(error) => error.model_output().clone().into_content(),
         };
-        UserContent::tool_result_for(
-            call.id.clone(),
-            call.provider.clone(),
-            call.function.name.clone(),
-            content,
-        )
+        UserContent::ToolResult(call.result(content))
     }
 }
 
@@ -225,7 +220,7 @@ mod tests {
 
     use rig_core::{
         completion::{AssistantContent, CompletionRequest, ToolDefinition},
-        message::ToolResultContent,
+        message::{ToolName, ToolResultContent},
         test_utils::{MockCompletionModel, MockTurn},
         tool::ToolOutput,
     };
@@ -308,7 +303,7 @@ mod tests {
 
     #[tokio::test]
     async fn tool_call_round_trip() {
-        let model = MockCompletionModel::new([
+        let model = MockCompletionModel::from_turns([
             MockTurn::tool_call("call-1", "calculator", json!({"op": "add", "a": 2, "b": 3})),
             MockTurn::text("The answer is 5."),
         ]);
@@ -349,7 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn tool_errors_are_fed_back_not_fatal() {
-        let model = MockCompletionModel::new([
+        let model = MockCompletionModel::from_turns([
             MockTurn::tool_call("c1", "calculator", json!({"op": "div", "a": 1, "b": 0})),
             MockTurn::tool_call("c2", "no_such_tool", json!({})),
             MockTurn::tool_call("c3", "calculator", json!({"op": "add"})),
@@ -394,7 +389,7 @@ mod tests {
         }
         let counter: &'static Counter = Box::leak(Box::default());
 
-        let model = MockCompletionModel::new([
+        let model = MockCompletionModel::from_turns([
             MockTurn::tool_call("c1", "calculator", json!({"op": "add", "a": 1, "b": 1})),
             MockTurn::text("ok"),
         ]);
@@ -417,7 +412,7 @@ mod tests {
     async fn max_turns_is_enforced_and_rolled_back() {
         let looping = (0..5)
             .map(|i| MockTurn::tool_call(format!("c{i}"), "word_count", json!({"text": "again"})));
-        let model = MockCompletionModel::new(looping);
+        let model = MockCompletionModel::from_turns(looping);
         let agent = agent(&model, registry([words])).with_max_turns(3);
         let mut conversation = Conversation::new();
         conversation.push(Message::user("earlier"));
@@ -433,7 +428,7 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_errors_propagate_and_roll_back() {
-        let model = MockCompletionModel::new([MockTurn::error("boom")]);
+        let model = MockCompletionModel::from_turns([MockTurn::error("boom")]);
         let agent = agent(&model, ToolRegistry::new());
         let mut conversation = Conversation::new();
 
@@ -449,7 +444,8 @@ mod tests {
 
     #[tokio::test]
     async fn conversation_carries_across_runs() {
-        let model = MockCompletionModel::new([MockTurn::text("first"), MockTurn::text("second")]);
+        let model =
+            MockCompletionModel::from_turns([MockTurn::text("first"), MockTurn::text("second")]);
         let agent = agent(&model, ToolRegistry::new());
         let mut conversation = Conversation::new();
 
@@ -528,7 +524,7 @@ mod tests {
         let mut call = AssistantTurn::text_reply("");
         call.content = vec![AssistantContent::tool_call(
             "t1",
-            "word_count",
+            ToolName::new("word_count").unwrap(),
             json!({"text": "a b c"}),
         )];
         let runtime = Scripted::new([call, AssistantTurn::text_reply("three words")]);
