@@ -1,0 +1,463 @@
+[
+  {
+    "program": "CBMC 6.6.0 (cbmc-6.6.0)"
+  },
+  {
+    "messageText": "CBMC version 6.6.0 (cbmc-6.6.0) 64-bit arm64 linux",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Type-checking overflow",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Generating GOTO Program",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Adding CPROVER library (arm64)",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Removal of function pointers and virtual functions",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Generic Property Instrumentation",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Starting Bounded Model Checking",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Passing problem to propositional reduction",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "converting SSA",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Running propositional reduction",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "SAT checker: instance is SATISFIABLE",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "Building error trace",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "result": [
+      {
+        "description": "arithmetic overflow on signed * in error * gain",
+        "property": "pitch_cmd.overflow.1",
+        "sourceLocation": {
+          "file": "overflow.c",
+          "function": "pitch_cmd",
+          "line": "2",
+          "workingDirectory": "/w"
+        },
+        "status": "FAILURE",
+        "trace": [
+          {
+            "hidden": false,
+            "sourceLocation": {
+              "file": "<built-in-additions>",
+              "line": "24",
+              "workingDirectory": "/w"
+            },
+            "stepType": "location-only",
+            "thread": 0
+          },
+          {
+            "function": {
+              "displayName": "__CPROVER_initialize",
+              "identifier": "__CPROVER_initialize",
+              "sourceLocation": {
+                "file": "<built-in-additions>",
+                "line": "24",
+                "workingDirectory": "/w"
+              }
+            },
+            "hidden": true,
+            "internal": false,
+            "sourceLocation": {
+              "file": "<built-in-additions>",
+              "line": "24",
+              "workingDirectory": "/w"
+            },
+            "stepType": "function-call",
+            "thread": 0
+          },
+          {
+            "assignmentType": "variable",
+            "hidden": true,
+            "internal": false,
+            "lhs": "__CPROVER_dead_object",
+            "mode": "C",
+            "sourceLocation": {
+              "file": "<built-in-additions>",
+              "line": "8",
+              "workingDirectory": "/w"
+            },
+            "stepType": "assignment",
+            "thread": 0,
+            "value": {
+              "data": "NULL",
+              "name": "pointer",
+              "type": "const void *"
+            }
+          },
+          {
+            "assignmentType": "variable",
+            "hidden": true,
+            "internal": false,
+            "lhs": "__CPROVER_deallocated",
+            "mode": "C",
+            "sourceLocation": {
+              "file": "<built-in-additions>",
+              "line": "7",
+              "workingDirectory": "/w"
+            },
+            "stepType": "assignment",
+            "thread": 0,
+            "value": {
+              "data": "NULL",
+              "name": "pointer",
+              "type": "const void *"
+            }
+          },
+          {
+            "assignmentType": "variable",
+            "hidden": true,
+            "internal": false,
+            "lhs": "__CPROVER_max_malloc_size",
+            "mode": "C",
+            "sourceLocation": {
+              "file": "<built-in-additions>",
+              "line": "12",
+              "workingDirectory": "/w"
+            },
+            "stepType": "assignment",
+            "thread": 0,
+            "value": {
+              "binary": "0000000010000000000000000000000000000000000000000000000000000000",
+              "data": "36028797018963968ul",
+              "name": "integer",
+              "type": "__CPROVER_size_t",
+              "width": 64
+            }
+          },
+          {
+            "assignmentType": "variable",
+            "hidden": true,
+            "internal": false,
+            "lhs": "__CPROVER_memory_leak",
+            "mode": "C",
+            "sourceLocation": {
+              "file": "<built-in-additions>",
+              "line": "9",
+              "workingDirectory": "/w"
+            },
+            "stepType": "assignment",
+            "thread": 0,
+            "value": {
+              "data": "NULL",
+              "name": "pointer",
+              "type": "const void *"
+            }
+          },
+          {
+            "assignmentType": "variable",
+            "hidden": true,
+            "internal": false,
+            "lhs": "__CPROVER_rounding_mode",
+            "mode": "C",
+            "sourceLocation": {
+              "file": "<built-in-additions>",
+              "line": "16",
+              "workingDirectory": "/w"
+            },
+            "stepType": "assignment",
+            "thread": 0,
+            "value": {
+              "binary": "00000000000000000000000000000000",
+              "data": "0",
+              "name": "integer",
+              "type": "signed int",
+              "width": 32
+            }
+          },
+          {
+            "function": {
+              "displayName": "__CPROVER_initialize",
+              "identifier": "__CPROVER_initialize",
+              "sourceLocation": {
+                "file": "<built-in-additions>",
+                "line": "24",
+                "workingDirectory": "/w"
+              }
+            },
+            "hidden": true,
+            "internal": false,
+            "stepType": "function-return",
+            "thread": 0
+          },
+          {
+            "assignmentType": "variable",
+            "hidden": true,
+            "internal": true,
+            "lhs": "error",
+            "mode": "C",
+            "sourceLocation": {
+              "file": "overflow.c",
+              "function": "pitch_cmd",
+              "line": "1",
+              "workingDirectory": "/w"
+            },
+            "stepType": "assignment",
+            "thread": 0,
+            "value": {
+              "binary": "00000000000000000000000000000000",
+              "data": "0",
+              "name": "integer",
+              "type": "signed int",
+              "width": 32
+            }
+          },
+          {
+            "assignmentType": "variable",
+            "hidden": true,
+            "internal": true,
+            "lhs": "error",
+            "mode": "C",
+            "sourceLocation": {
+              "file": "overflow.c",
+              "function": "pitch_cmd",
+              "line": "1",
+              "workingDirectory": "/w"
+            },
+            "stepType": "assignment",
+            "thread": 0,
+            "value": {
+              "binary": "10111111111111111111111111111110",
+              "data": "-1073741826",
+              "name": "integer",
+              "type": "signed int",
+              "width": 32
+            }
+          },
+          {
+            "hidden": false,
+            "inputID": "error",
+            "internal": true,
+            "mode": "C",
+            "sourceLocation": {
+              "file": "overflow.c",
+              "function": "pitch_cmd",
+              "line": "1",
+              "workingDirectory": "/w"
+            },
+            "stepType": "input",
+            "thread": 0,
+            "values": [
+              {
+                "binary": "10111111111111111111111111111110",
+                "data": "-1073741826",
+                "name": "integer",
+                "type": "signed int",
+                "width": 32
+              }
+            ]
+          },
+          {
+            "assignmentType": "variable",
+            "hidden": true,
+            "internal": true,
+            "lhs": "gain",
+            "mode": "C",
+            "sourceLocation": {
+              "file": "overflow.c",
+              "function": "pitch_cmd",
+              "line": "1",
+              "workingDirectory": "/w"
+            },
+            "stepType": "assignment",
+            "thread": 0,
+            "value": {
+              "binary": "00000000000000000000000000000000",
+              "data": "0",
+              "name": "integer",
+              "type": "signed int",
+              "width": 32
+            }
+          },
+          {
+            "assignmentType": "variable",
+            "hidden": true,
+            "internal": true,
+            "lhs": "gain",
+            "mode": "C",
+            "sourceLocation": {
+              "file": "overflow.c",
+              "function": "pitch_cmd",
+              "line": "1",
+              "workingDirectory": "/w"
+            },
+            "stepType": "assignment",
+            "thread": 0,
+            "value": {
+              "binary": "11111111111111111111111111111110",
+              "data": "-2",
+              "name": "integer",
+              "type": "signed int",
+              "width": 32
+            }
+          },
+          {
+            "hidden": false,
+            "inputID": "gain",
+            "internal": true,
+            "mode": "C",
+            "sourceLocation": {
+              "file": "overflow.c",
+              "function": "pitch_cmd",
+              "line": "1",
+              "workingDirectory": "/w"
+            },
+            "stepType": "input",
+            "thread": 0,
+            "values": [
+              {
+                "binary": "11111111111111111111111111111110",
+                "data": "-2",
+                "name": "integer",
+                "type": "signed int",
+                "width": 32
+              }
+            ]
+          },
+          {
+            "hidden": false,
+            "sourceLocation": {
+              "file": "overflow.c",
+              "line": "1",
+              "workingDirectory": "/w"
+            },
+            "stepType": "location-only",
+            "thread": 0
+          },
+          {
+            "function": {
+              "displayName": "pitch_cmd",
+              "identifier": "pitch_cmd",
+              "sourceLocation": {
+                "file": "overflow.c",
+                "line": "1",
+                "workingDirectory": "/w"
+              }
+            },
+            "hidden": false,
+            "internal": false,
+            "sourceLocation": {
+              "file": "overflow.c",
+              "line": "1",
+              "workingDirectory": "/w"
+            },
+            "stepType": "function-call",
+            "thread": 0
+          },
+          {
+            "assignmentType": "actual-parameter",
+            "hidden": false,
+            "internal": false,
+            "lhs": "error",
+            "mode": "C",
+            "sourceLocation": {
+              "file": "overflow.c",
+              "line": "1",
+              "workingDirectory": "/w"
+            },
+            "stepType": "assignment",
+            "thread": 0,
+            "value": {
+              "binary": "10111111111111111111111111111110",
+              "data": "-1073741826",
+              "name": "integer",
+              "type": "signed int",
+              "width": 32
+            }
+          },
+          {
+            "assignmentType": "actual-parameter",
+            "hidden": false,
+            "internal": false,
+            "lhs": "gain",
+            "mode": "C",
+            "sourceLocation": {
+              "file": "overflow.c",
+              "line": "1",
+              "workingDirectory": "/w"
+            },
+            "stepType": "assignment",
+            "thread": 0,
+            "value": {
+              "binary": "11111111111111111111111111111110",
+              "data": "-2",
+              "name": "integer",
+              "type": "signed int",
+              "width": 32
+            }
+          },
+          {
+            "assignmentType": "variable",
+            "hidden": true,
+            "internal": false,
+            "lhs": "out",
+            "mode": "C",
+            "sourceLocation": {
+              "file": "overflow.c",
+              "function": "pitch_cmd",
+              "line": "2",
+              "workingDirectory": "/w"
+            },
+            "stepType": "assignment",
+            "thread": 0,
+            "value": {
+              "binary": "00000000000000000000000000000000",
+              "data": "0",
+              "name": "integer",
+              "type": "signed int",
+              "width": 32
+            }
+          },
+          {
+            "hidden": false,
+            "internal": false,
+            "property": "pitch_cmd.overflow.1",
+            "reason": "arithmetic overflow on signed * in error * gain",
+            "sourceLocation": {
+              "file": "overflow.c",
+              "function": "pitch_cmd",
+              "line": "2",
+              "workingDirectory": "/w"
+            },
+            "stepType": "failure",
+            "thread": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "messageText": "VERIFICATION FAILED",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "cProverStatus": "failure"
+  }
+]

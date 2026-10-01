@@ -1,0 +1,19 @@
+[package]
+name = "agent-harness-tools-cbmc"
+description = "CBMC bounded model checking as an audited agent-harness tool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+agent-harness.workspace = true
+rig-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

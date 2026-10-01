@@ -1,0 +1,23 @@
+[
+  {
+    "program": "CBMC 6.6.0 (cbmc-6.6.0)"
+  },
+  {
+    "messageText": "CBMC version 6.6.0 (cbmc-6.6.0) 64-bit arm64 linux",
+    "messageType": "STATUS-MESSAGE"
+  },
+  {
+    "messageText": "syntax error before '{'",
+    "messageType": "ERROR",
+    "sourceLocation": {
+      "file": "bad.c",
+      "function": "broken",
+      "line": "1",
+      "workingDirectory": "/w"
+    }
+  },
+  {
+    "messageText": "PARSING ERROR",
+    "messageType": "ERROR"
+  }
+]

@@ -115,7 +115,8 @@ of a log is detectable too.
 
 `validate-openshell.sh` builds the sandbox binary in `rust:1.95` and the
 image on `debian:trixie-slim`, both **pinned by digest** (multi-arch
-indexes), and passes the git commit (with `-dirty` for uncommitted changes)
+indexes; the Rust image and Debian package versions such as
+`cbmc=6.6.0-4` live in `images.env`, shared with `test-in-container.sh`), and passes the git commit (with `-dirty` for uncommitted changes)
 into the build. The same commit therefore builds with the same compiler and
 base image, and every audit record names both the commit and the compiler.
 Not pinned: the `cmake` package installed from Debian during the build

@@ -33,11 +33,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 POLICY="$ROOT/openshell-policy.yaml"
 IMAGE="agent-harness-sandbox:dev"
-# The build toolchain, pinned by digest (a multi-arch index) so the same
-# commit always builds with the same compiler. Debian trixie: the base in
-# sandbox.Dockerfile must stay trixie too so glibc matches. To update, pull
-# the new tag and take `docker inspect <tag> --format '{{index .RepoDigests 0}}'`.
-RUST_IMAGE="rust:1.95@sha256:f49565f188ee00bc2a18dd418183f2c5f23ef7d6e691890517ed341a598f67c3"
+# The build toolchain (RUST_IMAGE), pinned by digest in images.env so the
+# same commit always builds with the same compiler. Debian trixie: the base in
+# sandbox.Dockerfile must stay trixie too so glibc matches.
+# shellcheck source=images.env
+source "$ROOT/images.env"
 # Sandbox names are capped at 19 characters (OpenShell 0.1.2).
 PREFIX="ahv-$$"
 SKIP_BUILD=0
