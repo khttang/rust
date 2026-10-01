@@ -28,3 +28,13 @@ Principles and record format: `docs/audit-and-certification.md`. The harness pro
 * **Attribution.** Approvals name their `Decider`; never record an automatic decision as a human one.
 * **Configuration identification.** Record versions and hashes of anything that affects a result (programs, models, inputs, policy) when adding new components.
 * **Never weaken the trail silently.** Changes to the record format, hash chain, redaction or fail-closed behaviour need explicit user approval and a matching update to `docs/audit-and-certification.md`.
+
+## 6. Common Commands
+Run from `agent-harness/`. Prefer these over rediscovering them.
+* **Quick checks:** `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`. CBMC tests skip locally when CBMC is not installed.
+* **Full suite (what CI runs):** `./test-in-container.sh [-p <crate>]`: Linux, Rust 1.95, real CBMC; CBMC tests cannot skip.
+* **Offline policy checks:** `./run-bounded.sh --dry-run`.
+* **Sandbox validation:** `./validate-openshell.sh [--skip-build]`. Needs colima, the OpenShell gateway and the relay (`docker run -d --rm --name openshell-gw-relay --network host alpine/socat TCP-LISTEN:17670,bind=127.0.0.1,fork,reuseaddr TCP:192.168.5.2:17670`). Live opt-ins cost API tokens: `OPENSHELL_LIVE_OPENAI_PROVIDER=openai`, `OPENSHELL_LIVE_GEMINI_PROVIDER=gemini`, `OPENSHELL_LIVE_FIX_CASE=<case>`.
+* **Verify audit logs:** `cargo run -q --bin agent-harness -- verify-audit <file>…`.
+* **Corpus self-test (needs CBMC):** `cargo run -q -p agent-harness-task-verified-fix --bin verified-fix -- self-test crates/agent-harness-task-verified-fix/corpus`.
+* **Pinned versions:** `images.env` (Rust image digest, `cbmc`, `libc6-dev`) and the base image digest in `sandbox.Dockerfile`; bump `libc6-dev` together with that base digest. Keep `sha2` at the version rig-core uses, so there is one copy.
