@@ -1,7 +1,8 @@
 use esp_idf_svc::hal::gpio::{PinDriver, AnyOutputPin};
 use log::{info, error};
 use std::thread; 
-use std::time::Duration; 
+use std::time::Duration;
+use anyhow::Result;
 
 // 1. Create a zero-cost wrapper structure to hold our raw pointer
 pub struct SendRawPtr(pub *mut AnyOutputPin<'static>);
@@ -9,7 +10,7 @@ pub struct SendRawPtr(pub *mut AnyOutputPin<'static>);
 // 2. Explicitly tell the compiler that transferring this raw address between threads is safe
 unsafe impl Send for SendRawPtr {}
 
-pub fn spawn_basic_heartbeat(pin: AnyOutputPin) -> anyhow::Result<()> {
+pub fn spawn_basic_heartbeat(pin: AnyOutputPin) -> Result<()> {
     // 3. Transmute or unsafe cast the pin's local lifetime to a static one 
     // so it can safely live inside an independent background thread.
     let static_pin: AnyOutputPin<'static> = unsafe { std::mem::transmute(pin) };

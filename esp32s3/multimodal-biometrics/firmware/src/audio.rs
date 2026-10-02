@@ -1,6 +1,6 @@
 use esp_idf_sys as sys;
 use log::{info, warn};
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 
 // --- SAFE, CONFLICT-FREE AUDIO PIN DEFINITIONS ---
 const PIN_MIC_WS: i32 = 41;
@@ -16,7 +16,7 @@ pub struct AudioSystem {
     pub rx_handle: sys::i2s_chan_handle_t,
 }
 
-pub fn init_audio_subsystem() -> anyhow::Result<AudioSystem> {
+pub fn init_audio_subsystem() -> Result<AudioSystem> {
     unsafe {
         info!("Initializing modern ESP-IDF v5.x I2S Audio Driver...");
 
@@ -24,7 +24,7 @@ pub fn init_audio_subsystem() -> anyhow::Result<AudioSystem> {
         let mut rx_handle: sys::i2s_chan_handle_t = std::ptr::null_mut();
 
         let host_cfg = sys::i2s_chan_config_t {
-            id: sys::i2s_port_t_I2S_NUM_0, 
+            id: sys::i2s_port_t_I2S_NUM_1, 
             role: sys::i2s_role_t_I2S_ROLE_MASTER,
             dma_desc_num: 3,      
             dma_frame_num: 128,   
